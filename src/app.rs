@@ -29,6 +29,7 @@ pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
     pub cpu_history: VecDeque<u64>,
+    pub proc_scroll: usize,
     pub should_quit: bool,
 }
 
@@ -38,6 +39,7 @@ impl App {
             active_tab: Tab::Dash,
             sidebar_visible: true,
             cpu_history: VecDeque::with_capacity(60),
+            proc_scroll: 0,
             should_quit: false,
         }
     }
@@ -61,6 +63,8 @@ impl App {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sidebar_visible = !self.sidebar_visible;
             }
+            KeyCode::Up => self.proc_scroll = self.proc_scroll.saturating_sub(1),
+            KeyCode::Down => self.proc_scroll = self.proc_scroll.saturating_add(1),
             _ => {}
         }
     }

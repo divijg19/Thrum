@@ -1,7 +1,7 @@
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Sparkline};
+use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 use ratatui::Frame;
 
 use crate::app::{App, Tab};
@@ -83,6 +83,47 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&h, help);
 }
 
+fn render_proc(frame: &mut Frame, area: Rect, samples: &Samples, scroll: usize) {
+    let max_visible = (area.height as usize).saturating_sub(3);
+    let start = scroll.min(samples.processes.len().saturating_sub(1));
+    let end = samples.processes.len().min(start + max_visible);
+    let visible = &samples.processes[start..end];
+
+    let widths: [Constraint; 5] = [
+        Constraint::Fill(1),
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Length(10),
+        Constraint::Length(10),
+    ];
+
+    let rows: Vec<Row> = visible
+        .iter()
+        .map(|p| {
+            let mem_label = if p.memory >= 1_073_741_824 {
+                format!("{:.1}GB", p.memory as f64 / 1_073_741_824.0)
+            } else {
+                format!("{:.0}MB", p.memory as f64 / 1_048_576.0)
+            };
+            Row::new(vec![
+                Cell::from(p.name.as_str()),
+                Cell::from(format!("{}", p.pid)),
+                Cell::from(Span::styled(
+                    format!("{:.1}", p.cpu),
+                    Style::new().fg(Color::Green),
+                )),
+                Cell::from(Span::styled(mem_label, Style::new().fg(Color::Cyan))),
+                Cell::from(p.status.as_str()),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec!["Name", "PID", "CPU%", "Memory", "Status"]))
+        .block(Block::bordered().title(" Processes "));
+    frame.render_widget(table, area);
+}
+
 fn render_placeholder(frame: &mut Frame, area: Rect, message: &str) {
     let [_, text, _] = Layout::vertical([
         Constraint::Fill(1),
@@ -120,7 +161,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
-        Tab::Proc => render_placeholder(frame, content_area, "Process list - v0.0.5"),
+        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll),
         Tab::Net => render_placeholder(frame, content_area, "Network I/O - v0.0.6"),
         Tab::Files => render_placeholder(frame, content_area, "Filesystem mounts - v0.0.7"),
         Tab::Time => render_placeholder(frame, content_area, "System info - v0.0.8"),
