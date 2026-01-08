@@ -83,6 +83,50 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&h, help);
 }
 
+fn format_rate(bytes: u64) -> String {
+    let s = if bytes >= 1_000_000 {
+        format!("{:.1}MB/s", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1}KB/s", bytes as f64 / 1_000.0)
+    } else {
+        format!("{}B/s", bytes)
+    };
+    format!("{:>12}", s)
+}
+
+fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
+    let rows: Vec<Row> = samples
+        .interfaces
+        .iter()
+        .map(|iface| {
+            Row::new(vec![
+                Cell::from(iface.name.as_str()),
+                Cell::from(Span::styled(
+                    format_rate(iface.rx_bytes),
+                    Style::new().fg(Color::Yellow),
+                )),
+                Cell::from(Span::styled(
+                    format_rate(iface.tx_bytes),
+                    Style::new().fg(Color::Yellow),
+                )),
+                Cell::from(iface.state.as_str()),
+            ])
+        })
+        .collect();
+
+    let widths: [Constraint; 4] = [
+        Constraint::Fill(1),
+        Constraint::Length(12),
+        Constraint::Length(12),
+        Constraint::Length(8),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec!["Interface", "RX/s", "TX/s", "State"]))
+        .block(Block::bordered().title(" Network I/O "));
+    frame.render_widget(table, area);
+}
+
 fn render_proc(frame: &mut Frame, area: Rect, samples: &Samples, scroll: usize) {
     let max_visible = (area.height as usize).saturating_sub(3);
     let start = scroll.min(samples.processes.len().saturating_sub(1));
@@ -162,7 +206,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
         Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll),
-        Tab::Net => render_placeholder(frame, content_area, "Network I/O - v0.0.6"),
+        Tab::Net => render_net(frame, content_area, samples),
         Tab::Files => render_placeholder(frame, content_area, "Filesystem mounts - v0.0.7"),
         Tab::Time => render_placeholder(frame, content_area, "System info - v0.0.8"),
     }
