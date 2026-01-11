@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tab {
     Dash,
     Proc,
@@ -67,5 +67,132 @@ impl App {
             KeyCode::Down => self.proc_scroll = self.proc_scroll.saturating_add(1),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn tab_has_five_variants() {
+        assert_eq!(Tab::ALL.len(), 5);
+    }
+
+    #[test]
+    fn tab_label_matches() {
+        assert_eq!(Tab::Dash.label(), "Dash");
+        assert_eq!(Tab::Proc.label(), "Proc");
+        assert_eq!(Tab::Net.label(), "Net");
+        assert_eq!(Tab::Files.label(), "Files");
+        assert_eq!(Tab::Time.label(), "Time");
+    }
+
+    #[test]
+    fn app_new_defaults() {
+        let app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        assert!(app.sidebar_visible);
+        assert!(!app.should_quit);
+        assert_eq!(app.proc_scroll, 0);
+    }
+
+    #[test]
+    fn key_q_quits() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn key_tab_cycles_forward() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Net);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Files);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Time);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn key_backtab_cycles_backward() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Time);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Files);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Net);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Time);
+    }
+
+    #[test]
+    fn key_numbers_jump_to_tab() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        app.handle_key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Files);
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Time);
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Net);
+    }
+
+    #[test]
+    fn key_ctrl_s_toggles_sidebar() {
+        let mut app = App::new();
+        assert!(app.sidebar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.sidebar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.sidebar_visible);
+    }
+
+    #[test]
+    fn key_plain_s_does_not_toggle() {
+        let mut app = App::new();
+        assert!(app.sidebar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert!(app.sidebar_visible);
+    }
+
+    #[test]
+    fn key_up_down_scrolls_proc() {
+        let mut app = App::new();
+        assert_eq!(app.proc_scroll, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 2);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 0);
+    }
+
+    #[test]
+    fn key_unknown_does_nothing() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!app.should_quit);
+        assert_eq!(app.active_tab, Tab::Dash);
+        assert!(app.sidebar_visible);
     }
 }

@@ -1,3 +1,10 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::similar_names
+)]
+
 use std::time::Duration;
 
 use crossterm::event::{self, Event};
@@ -26,12 +33,12 @@ fn main() -> std::io::Result<()> {
 
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
-        if event::poll(Duration::from_secs(1))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key);
-                if app.should_quit {
-                    break;
-                }
+        if event::poll(Duration::from_secs(1))?
+            && let Event::Key(key) = event::read()?
+        {
+            app.handle_key(key);
+            if app.should_quit {
+                break;
             }
         }
     }
