@@ -94,6 +94,59 @@ fn format_rate(bytes: u64) -> String {
     format!("{:>12}", s)
 }
 
+fn format_disk_size(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b >= 1_099_511_627_776.0 {
+        format!("{:.1}TB", b / 1_099_511_627_776.0)
+    } else if b >= 1_073_741_824.0 {
+        format!("{:.1}GB", b / 1_073_741_824.0)
+    } else if b >= 1_048_576.0 {
+        format!("{:.0}MB", b / 1_048_576.0)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
+fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
+    let widths: [Constraint; 6] = [
+        Constraint::Fill(1),
+        Constraint::Length(6),
+        Constraint::Length(9),
+        Constraint::Length(9),
+        Constraint::Length(6),
+        Constraint::Length(7),
+    ];
+
+    let rows: Vec<Row> = samples
+        .disks
+        .iter()
+        .map(|d| {
+            Row::new(vec![
+                Cell::from(d.mount.as_str()),
+                Cell::from(d.fs.as_str()),
+                Cell::from(Span::styled(
+                    format_disk_size(d.total),
+                    Style::new().fg(Color::Magenta),
+                )),
+                Cell::from(Span::styled(
+                    format_disk_size(d.available),
+                    Style::new().fg(Color::Magenta),
+                )),
+                Cell::from(Span::styled(
+                    format!("{:.1}%", d.usage_pct),
+                    Style::new().fg(Color::Magenta),
+                )),
+                Cell::from(d.kind.as_str()),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec!["Mount", "FS", "Size", "Avail", "Use%", "Kind"]))
+        .block(Block::bordered().title(" Filesystems "));
+    frame.render_widget(table, area);
+}
+
 fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
     let rows: Vec<Row> = samples
         .interfaces
@@ -207,7 +260,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Dash => render_dash(frame, content_area, app, samples),
         Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll),
         Tab::Net => render_net(frame, content_area, samples),
-        Tab::Files => render_placeholder(frame, content_area, "Filesystem mounts - v0.0.7"),
+        Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_placeholder(frame, content_area, "System info - v0.0.8"),
     }
 }
