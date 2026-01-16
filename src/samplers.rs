@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use sysinfo::{Disks, InterfaceOperationalState, Networks, ProcessesToUpdate, System};
+use sysinfo::{Components, Disks, InterfaceOperationalState, Networks, ProcessesToUpdate, System};
 
 pub struct ProcessInfo {
     pub name: String,
@@ -34,6 +34,13 @@ pub struct SysInfo {
     pub uptime: u64,
 }
 
+pub struct TempInfo {
+    pub label: String,
+    pub temperature: Option<f32>,
+    pub max: Option<f32>,
+    pub critical: Option<f32>,
+}
+
 pub struct Samples {
     pub cpu_usage: f32,
     pub mem_used: u64,
@@ -41,6 +48,7 @@ pub struct Samples {
     pub processes: Vec<ProcessInfo>,
     pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
+    pub temperatures: Vec<TempInfo>,
     pub sys_info: SysInfo,
 }
 
@@ -48,6 +56,7 @@ pub struct Samplers {
     sys: System,
     networks: Networks,
     disks: Disks,
+    components: Components,
 }
 
 impl Samplers {
@@ -56,6 +65,7 @@ impl Samplers {
             sys: System::new(),
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
+            components: Components::new_with_refreshed_list(),
         }
     }
 
@@ -67,6 +77,7 @@ impl Samplers {
         }
         self.networks.refresh(true);
         self.disks.refresh(true);
+        self.components.refresh(true);
 
         let mut processes: Vec<ProcessInfo> = self
             .sys
@@ -126,6 +137,19 @@ impl Samplers {
 
         disks.sort_by(|a, b| a.mount.cmp(&b.mount));
 
+        let mut temperatures: Vec<TempInfo> = self
+            .components
+            .iter()
+            .map(|c| TempInfo {
+                label: c.label().to_string(),
+                temperature: c.temperature(),
+                max: c.max(),
+                critical: c.critical(),
+            })
+            .collect();
+
+        temperatures.sort_by(|a, b| a.label.cmp(&b.label));
+
         let sys_info = SysInfo {
             hostname: System::host_name().unwrap_or_default(),
             os: System::long_os_version().unwrap_or_default(),
@@ -141,6 +165,7 @@ impl Samplers {
             processes,
             interfaces,
             disks,
+            temperatures,
             sys_info,
         }
     }
