@@ -32,6 +32,8 @@ pub struct App {
     pub sidebar_visible: bool,
     pub cpu_history: VecDeque<u64>,
     pub proc_scroll: usize,
+    pub proc_query: String,
+    pub proc_search_focused: bool,
     pub should_quit: bool,
 }
 
@@ -42,11 +44,41 @@ impl App {
             sidebar_visible: true,
             cpu_history: VecDeque::with_capacity(60),
             proc_scroll: 0,
+            proc_query: String::new(),
+            proc_search_focused: false,
             should_quit: false,
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if self.proc_search_focused && self.active_tab == Tab::Proc {
+            match key.code {
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    self.proc_query.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.proc_query.pop();
+                    if self.proc_query.is_empty() {
+                        self.proc_search_focused = false;
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.proc_query.clear();
+                    self.proc_search_focused = false;
+                    return;
+                }
+                KeyCode::Enter => {
+                    self.proc_search_focused = false;
+                    return;
+                }
+                _ => {
+                    self.proc_search_focused = false;
+                }
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
             KeyCode::Tab => {
@@ -63,6 +95,9 @@ impl App {
             KeyCode::Char('4') => self.active_tab = Tab::Files,
             KeyCode::Char('5') => self.active_tab = Tab::Time,
             KeyCode::Char('6') => self.active_tab = Tab::Temp,
+            KeyCode::Char('/') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_search_focused = true;
+            }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sidebar_visible = !self.sidebar_visible;
             }
@@ -100,6 +135,8 @@ mod tests {
         assert!(app.sidebar_visible);
         assert!(!app.should_quit);
         assert_eq!(app.proc_scroll, 0);
+        assert!(app.proc_query.is_empty());
+        assert!(!app.proc_search_focused);
     }
 
     #[test]
@@ -195,6 +232,97 @@ mod tests {
         assert_eq!(app.proc_scroll, 0);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.proc_scroll, 0);
+    }
+
+    #[test]
+    fn key_slash_enters_search_only_on_proc() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(!app.proc_search_focused);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        assert!(!app.proc_search_focused);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.proc_search_focused);
+    }
+
+    #[test]
+    fn search_typing_appends_query() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.proc_search_focused);
+        assert_eq!(app.active_tab, Tab::Proc);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(app.proc_query, "fir");
+        assert_eq!(app.active_tab, Tab::Proc);
+    }
+
+    #[test]
+    fn search_backspace_pops() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert_eq!(app.proc_query, "ab");
+
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(app.proc_query, "a");
+        assert!(app.proc_search_focused);
+    }
+
+    #[test]
+    fn search_backspace_empty_exits() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(app.proc_query.is_empty());
+        assert!(!app.proc_search_focused);
+    }
+
+    #[test]
+    fn search_esc_clears_and_exits() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(app.proc_query, "x");
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.proc_query.is_empty());
+        assert!(!app.proc_search_focused);
+    }
+
+    #[test]
+    fn search_enter_exits_keeps_query() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.proc_search_focused);
+        assert_eq!(app.proc_query, "f");
+    }
+
+    #[test]
+    fn search_tab_switches_tab() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.proc_search_focused);
+
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(!app.proc_search_focused);
+        assert_eq!(app.active_tab, Tab::Net);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
 use crate::app::{App, Tab};
-use crate::samplers::Samples;
+use crate::samplers::{ProcessInfo, Samples};
 
 fn tab_color(tab: Tab) -> Color {
     match tab {
@@ -264,11 +264,51 @@ fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
     frame.render_widget(table, area);
 }
 
-fn render_proc(frame: &mut Frame, area: Rect, samples: &Samples, scroll: usize) {
-    let max_visible = (area.height as usize).saturating_sub(3);
-    let start = scroll.min(samples.processes.len().saturating_sub(1));
-    let end = samples.processes.len().min(start + max_visible);
-    let visible = &samples.processes[start..end];
+fn render_proc(
+    frame: &mut Frame,
+    area: Rect,
+    samples: &Samples,
+    scroll: usize,
+    query: &str,
+    searching: bool,
+) {
+    let has_query = !query.is_empty();
+    let (search_area, table_area) = if has_query || searching {
+        let [s, t] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        (Some(s), t)
+    } else {
+        (None, area)
+    };
+
+    if let Some(sa) = search_area {
+        let cursor = if searching { "\u{258c}" } else { "" };
+        let content = if query.is_empty() {
+            cursor.to_string()
+        } else {
+            format!("{query}{cursor}")
+        };
+        let block = Paragraph::new(content).block(Block::bordered().title(" Search "));
+        frame.render_widget(&block, sa);
+    }
+
+    let filtered: Vec<&ProcessInfo> = if has_query {
+        let q = query.to_lowercase();
+        samples
+            .processes
+            .iter()
+            .filter(|p| p.name.to_lowercase().contains(&q))
+            .collect()
+    } else {
+        samples.processes.iter().collect()
+    };
+
+    let count = filtered.len();
+    let scroll = scroll.min(count.saturating_sub(1));
+    let max_visible = (table_area.height as usize).saturating_sub(3);
+    let start = scroll.min(count.saturating_sub(1));
+    let end = count.min(start + max_visible);
+    let visible = &filtered[start..end];
 
     let widths: [Constraint; 5] = [
         Constraint::Fill(1),
@@ -302,7 +342,7 @@ fn render_proc(frame: &mut Frame, area: Rect, samples: &Samples, scroll: usize) 
     let table = Table::new(rows, widths)
         .header(Row::new(vec!["Name", "PID", "CPU%", "Memory", "Status"]))
         .block(Block::bordered().title(" Processes "));
-    frame.render_widget(table, area);
+    frame.render_widget(table, table_area);
 }
 
 pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
@@ -325,7 +365,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
-        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll),
+        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll, &app.proc_query, app.proc_search_focused),
         Tab::Net => render_net(frame, content_area, samples),
         Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_time(frame, content_area, samples),
