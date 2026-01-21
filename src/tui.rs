@@ -38,11 +38,12 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
-    let [_, gauges, cpu_spark, mem_spark, help, _] = Layout::vertical([
+    let [_, gauges, cpu_spark, mem_spark, load, help, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(3),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
     ])
@@ -101,6 +102,17 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .data(app.mem_history.iter())
         .style(Style::new().fg(Color::Cyan));
     frame.render_widget(&ms, mem_spark);
+
+    let l = Paragraph::new(Line::from(vec![
+        Span::styled("Load Average  ", Style::new().bold()),
+        Span::raw(format!(
+            "{:.2} (1m)  {:.2} (5m)  {:.2} (15m)",
+            samples.load_one, samples.load_five, samples.load_fifteen,
+        )),
+    ]))
+    .alignment(Alignment::Center)
+    .gray();
+    frame.render_widget(&l, load);
 
     let h = Paragraph::new("press q to quit")
         .alignment(Alignment::Center)
