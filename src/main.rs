@@ -41,6 +41,15 @@ fn main() -> std::io::Result<()> {
             app.mem_history.pop_front();
         }
 
+        app.net_rx_history.push_back(samples.net_rx_rate);
+        if app.net_rx_history.len() > 60 {
+            app.net_rx_history.pop_front();
+        }
+        app.net_tx_history.push_back(samples.net_tx_rate);
+        if app.net_tx_history.len() > 60 {
+            app.net_tx_history.pop_front();
+        }
+
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
         if event::poll(Duration::from_secs(1))?
