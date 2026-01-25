@@ -120,13 +120,13 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&h, help);
 }
 
-fn format_rate(bytes: u64) -> String {
+fn format_bytes(bytes: u64) -> String {
     let s = if bytes >= 1_000_000 {
-        format!("{:.1}MB/s", bytes as f64 / 1_000_000.0)
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
     } else if bytes >= 1_000 {
-        format!("{:.1}KB/s", bytes as f64 / 1_000.0)
+        format!("{:.1}KB", bytes as f64 / 1_000.0)
     } else {
-        format!("{bytes}B/s")
+        format!("{bytes}B")
     };
     format!("{s:>12}")
 }
@@ -134,11 +134,11 @@ fn format_rate(bytes: u64) -> String {
 fn format_disk_size(bytes: u64) -> String {
     let b = bytes as f64;
     if b >= 1_099_511_627_776.0 {
-        format!("{:.1}TB", b / 1_099_511_627_776.0)
+        format!("{:.1}TiB", b / 1_099_511_627_776.0)
     } else if b >= 1_073_741_824.0 {
-        format!("{:.1}GB", b / 1_073_741_824.0)
+        format!("{:.1}GiB", b / 1_073_741_824.0)
     } else if b >= 1_048_576.0 {
-        format!("{:.0}MB", b / 1_048_576.0)
+        format!("{:.0}MiB", b / 1_048_576.0)
     } else {
         format!("{bytes}B")
     }
@@ -286,11 +286,11 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
             Row::new(vec![
                 Cell::from(iface.name.as_str()),
                 Cell::from(Span::styled(
-                    format_rate(iface.rx_bytes),
+                    format_bytes(iface.rx_bytes),
                     Style::new().fg(Color::Yellow),
                 )),
                 Cell::from(Span::styled(
-                    format_rate(iface.tx_bytes),
+                    format_bytes(iface.tx_bytes),
                     Style::new().fg(Color::Yellow),
                 )),
                 Cell::from(iface.state.as_str()),
@@ -306,7 +306,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Interface", "RX/s", "TX/s", "State"]))
+        .header(Row::new(vec!["Interface", "RX", "TX", "State"]))
         .block(Block::bordered().title(" Network I/O "));
     frame.render_widget(table, table_area);
 
@@ -385,7 +385,7 @@ fn render_proc(
     let count = filtered.len();
     let scroll = scroll.min(count.saturating_sub(1));
     let max_visible = (table_area.height as usize).saturating_sub(3);
-    let start = scroll.min(count.saturating_sub(1));
+    let start = scroll;
     let end = count.min(start + max_visible);
     let visible = &filtered[start..end];
 
@@ -463,23 +463,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_rate_zero() {
-        assert_eq!(format_rate(0), format!("{:>12}", "0B/s"));
+    fn format_bytes_zero() {
+        assert_eq!(format_bytes(0), format!("{:>12}", "0B"));
     }
 
     #[test]
-    fn format_rate_bytes() {
-        assert_eq!(format_rate(500), format!("{:>12}", "500B/s"));
+    fn format_bytes_bytes() {
+        assert_eq!(format_bytes(500), format!("{:>12}", "500B"));
     }
 
     #[test]
-    fn format_rate_kilobytes() {
-        assert_eq!(format_rate(1500), format!("{:>12}", "1.5KB/s"));
+    fn format_bytes_kilobytes() {
+        assert_eq!(format_bytes(1500), format!("{:>12}", "1.5KB"));
     }
 
     #[test]
-    fn format_rate_megabytes() {
-        assert_eq!(format_rate(2_000_000), format!("{:>12}", "2.0MB/s"));
+    fn format_bytes_megabytes() {
+        assert_eq!(format_bytes(2_000_000), format!("{:>12}", "2.0MB"));
     }
 
     #[test]
@@ -489,18 +489,18 @@ mod tests {
 
     #[test]
     fn format_disk_size_megabytes() {
-        assert_eq!(format_disk_size(1_048_576), "1MB");
+        assert_eq!(format_disk_size(1_048_576), "1MiB");
     }
 
     #[test]
     fn format_disk_size_gigabytes() {
-        assert_eq!(format_disk_size(1_073_741_824), "1.0GB");
+        assert_eq!(format_disk_size(1_073_741_824), "1.0GiB");
     }
 
     #[test]
     fn format_disk_size_terabytes() {
         let two_tb = 2 * 1_099_511_627_776;
-        assert_eq!(format_disk_size(two_tb), "2.0TB");
+        assert_eq!(format_disk_size(two_tb), "2.0TiB");
     }
 
     #[test]
