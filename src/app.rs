@@ -3,6 +3,14 @@ use std::collections::VecDeque;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ProcSortField {
+    Name,
+    Pid,
+    Cpu,
+    Memory,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tab {
     Dash,
     Proc,
@@ -27,6 +35,7 @@ impl Tab {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -35,6 +44,8 @@ pub struct App {
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
+    pub proc_sort_field: ProcSortField,
+    pub proc_sort_asc: bool,
     pub should_quit: bool,
 }
 
@@ -48,6 +59,8 @@ impl App {
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
+            proc_sort_field: ProcSortField::Cpu,
+            proc_sort_asc: false,
             should_quit: false,
         }
     }
@@ -103,6 +116,25 @@ impl App {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sidebar_visible = !self.sidebar_visible;
             }
+            KeyCode::Char('n') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::Name;
+                self.proc_sort_asc = true;
+            }
+            KeyCode::Char('p') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::Pid;
+                self.proc_sort_asc = true;
+            }
+            KeyCode::Char('c') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::Cpu;
+                self.proc_sort_asc = false;
+            }
+            KeyCode::Char('m') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::Memory;
+                self.proc_sort_asc = false;
+            }
+            KeyCode::Char('r') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_asc = !self.proc_sort_asc;
+            }
             KeyCode::Up => self.proc_scroll = self.proc_scroll.saturating_sub(1),
             KeyCode::Down => self.proc_scroll = self.proc_scroll.saturating_add(1),
             _ => {}
@@ -140,6 +172,8 @@ mod tests {
         assert!(app.proc_query.is_empty());
         assert!(!app.proc_search_focused);
         assert_eq!(app.mem_history.len(), 0);
+        assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
+        assert!(!app.proc_sort_asc);
     }
 
     #[test]
@@ -326,6 +360,26 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
         assert_eq!(app.active_tab, Tab::Net);
+    }
+
+    #[test]
+    fn sort_keys_change_sort_field() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
+        assert!(!app.proc_sort_asc);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(app.proc_sort_field, ProcSortField::Name);
+        assert!(app.proc_sort_asc);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert!(!app.proc_sort_asc);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(app.proc_sort_field, ProcSortField::Memory);
+        assert!(!app.proc_sort_asc);
     }
 
     #[test]

@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use sysinfo::{Components, Disks, InterfaceOperationalState, Networks, ProcessesToUpdate, System};
 
 pub struct ProcessInfo {
@@ -84,7 +82,7 @@ impl Samplers {
         self.disks.refresh(true);
         self.components.refresh(true);
 
-        let mut processes: Vec<ProcessInfo> = self
+        let processes: Vec<ProcessInfo> = self
             .sys
             .processes()
             .iter()
@@ -96,8 +94,6 @@ impl Samplers {
                 status: format!("{:?}", p.status()),
             })
             .collect();
-
-        processes.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(Ordering::Equal));
 
         let mut interfaces: Vec<NetInfo> = self
             .networks
