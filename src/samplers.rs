@@ -64,13 +64,20 @@ pub struct Samplers {
     components: Components,
     prev_net_rx: u64,
     prev_net_tx: u64,
+    hostname: String,
+    os: String,
+    kernel: String,
+    arch: String,
 }
 
 impl Samplers {
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
         let prev_net_rx = networks.values().map(sysinfo::NetworkData::received).sum();
-        let prev_net_tx = networks.values().map(sysinfo::NetworkData::transmitted).sum();
+        let prev_net_tx = networks
+            .values()
+            .map(sysinfo::NetworkData::transmitted)
+            .sum();
         Self {
             sys: System::new(),
             networks,
@@ -78,6 +85,10 @@ impl Samplers {
             components: Components::new_with_refreshed_list(),
             prev_net_rx,
             prev_net_tx,
+            hostname: System::host_name().unwrap_or_default(),
+            os: System::long_os_version().unwrap_or_default(),
+            kernel: System::kernel_version().unwrap_or_default(),
+            arch: System::cpu_arch(),
         }
     }
 
@@ -92,18 +103,21 @@ impl Samplers {
         self.disks.refresh(true);
         self.components.refresh(true);
 
-        let processes: Vec<ProcessInfo> = self
-            .sys
-            .processes()
-            .iter()
-            .map(|(pid, p)| ProcessInfo {
-                name: p.name().to_string_lossy().into_owned(),
-                pid: pid.as_u32(),
-                cpu: p.cpu_usage(),
-                memory: p.memory(),
-                status: format!("{:?}", p.status()),
-            })
-            .collect();
+        let processes = if refresh_proc {
+            self.sys
+                .processes()
+                .iter()
+                .map(|(pid, p)| ProcessInfo {
+                    name: p.name().to_string_lossy().into_owned(),
+                    pid: pid.as_u32(),
+                    cpu: p.cpu_usage(),
+                    memory: p.memory(),
+                    status: format!("{:?}", p.status()),
+                })
+                .collect()
+        } else {
+            vec![]
+        };
 
         let mut interfaces: Vec<NetInfo> = self
             .networks
@@ -169,10 +183,10 @@ impl Samplers {
         temperatures.sort_by(|a, b| a.label.cmp(&b.label));
 
         let sys_info = SysInfo {
-            hostname: System::host_name().unwrap_or_default(),
-            os: System::long_os_version().unwrap_or_default(),
-            kernel: System::kernel_version().unwrap_or_default(),
-            arch: System::cpu_arch(),
+            hostname: self.hostname.clone(),
+            os: self.os.clone(),
+            kernel: self.kernel.clone(),
+            arch: self.arch.clone(),
             uptime: System::uptime(),
         };
 

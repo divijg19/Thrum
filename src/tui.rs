@@ -343,8 +343,7 @@ fn render_proc(
 ) {
     let has_query = !query.is_empty();
     let (search_area, table_area) = if has_query || searching {
-        let [s, t] =
-            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        let [s, t] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
         (Some(s), t)
     } else {
         (None, area)
@@ -401,9 +400,9 @@ fn render_proc(
         .iter()
         .map(|p| {
             let mem_label = if p.memory >= 1_073_741_824 {
-                format!("{:.1}GB", p.memory as f64 / 1_073_741_824.0)
+                format!("{:.1}GiB", p.memory as f64 / 1_073_741_824.0)
             } else {
-                format!("{:.0}MB", p.memory as f64 / 1_048_576.0)
+                format!("{:.0}MiB", p.memory as f64 / 1_048_576.0)
             };
             Row::new(vec![
                 Cell::from(p.name.as_str()),
@@ -420,10 +419,22 @@ fn render_proc(
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec![
-            format!("Name{}", sort_arrow(ProcSortField::Name, sort_field, sort_asc)),
-            format!("PID{}", sort_arrow(ProcSortField::Pid, sort_field, sort_asc)),
-            format!("CPU%{}", sort_arrow(ProcSortField::Cpu, sort_field, sort_asc)),
-            format!("Memory{}", sort_arrow(ProcSortField::Memory, sort_field, sort_asc)),
+            format!(
+                "Name{}",
+                sort_arrow(ProcSortField::Name, sort_field, sort_asc)
+            ),
+            format!(
+                "PID{}",
+                sort_arrow(ProcSortField::Pid, sort_field, sort_asc)
+            ),
+            format!(
+                "CPU%{}",
+                sort_arrow(ProcSortField::Cpu, sort_field, sort_asc)
+            ),
+            format!(
+                "Memory{}",
+                sort_arrow(ProcSortField::Memory, sort_field, sort_asc)
+            ),
             "Status".to_string(),
         ]))
         .block(Block::bordered().title(" Processes "));
@@ -450,7 +461,16 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
-        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll, &app.proc_query, app.proc_search_focused, app.proc_sort_field, app.proc_sort_asc),
+        Tab::Proc => render_proc(
+            frame,
+            content_area,
+            samples,
+            app.proc_scroll,
+            &app.proc_query,
+            app.proc_search_focused,
+            app.proc_sort_field,
+            app.proc_sort_asc,
+        ),
         Tab::Net => render_net(frame, content_area, app, samples),
         Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_time(frame, content_area, samples),
