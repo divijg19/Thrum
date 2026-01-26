@@ -73,10 +73,13 @@ pub struct Samplers {
 impl Samplers {
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
-        let prev_net_rx = networks.values().map(sysinfo::NetworkData::received).sum();
+        let prev_net_rx = networks
+            .values()
+            .map(sysinfo::NetworkData::total_received)
+            .sum();
         let prev_net_tx = networks
             .values()
-            .map(sysinfo::NetworkData::transmitted)
+            .map(sysinfo::NetworkData::total_transmitted)
             .sum();
         Self {
             sys: System::new(),
@@ -124,8 +127,8 @@ impl Samplers {
             .iter()
             .map(|(name, data)| NetInfo {
                 name: name.clone(),
-                rx_bytes: data.received(),
-                tx_bytes: data.transmitted(),
+                rx_bytes: data.total_received(),
+                tx_bytes: data.total_transmitted(),
                 state: match data.operational_state() {
                     InterfaceOperationalState::Up => "Up",
                     InterfaceOperationalState::Down => "Down",
