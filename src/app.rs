@@ -19,16 +19,18 @@ pub enum Tab {
     Files,
     Time,
     Temp,
+    Cores,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Dash,
         Tab::Proc,
         Tab::Net,
         Tab::Files,
         Tab::Time,
         Tab::Temp,
+        Tab::Cores,
     ];
 
     pub fn label(&self) -> &str {
@@ -39,6 +41,7 @@ impl Tab {
             Tab::Files => "Files",
             Tab::Time => "Time",
             Tab::Temp => "Temp",
+            Tab::Cores => "Cores",
         }
     }
 }
@@ -137,6 +140,7 @@ impl App {
             KeyCode::Char('4') => self.active_tab = Tab::Files,
             KeyCode::Char('5') => self.active_tab = Tab::Time,
             KeyCode::Char('6') => self.active_tab = Tab::Temp,
+            KeyCode::Char('7') => self.active_tab = Tab::Cores,
             KeyCode::Char('/') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
                 self.proc_search_focused = true;
             }
@@ -261,8 +265,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
-    fn tab_has_six_variants() {
-        assert_eq!(Tab::ALL.len(), 6);
+    fn tab_has_seven_variants() {
+        assert_eq!(Tab::ALL.len(), 7);
     }
 
     #[test]
@@ -273,6 +277,7 @@ mod tests {
         assert_eq!(Tab::Files.label(), "Files");
         assert_eq!(Tab::Time.label(), "Time");
         assert_eq!(Tab::Temp.label(), "Temp");
+        assert_eq!(Tab::Cores.label(), "Cores");
     }
 
     #[test]
@@ -289,6 +294,7 @@ mod tests {
         assert_eq!(app.net_tx_history.len(), 0);
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
+        assert!(!app.help_visible);
     }
 
     #[test]
@@ -313,13 +319,17 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Temp);
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Cores);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
     }
 
     #[test]
     fn key_backtab_cycles_backward() {
         let mut app = App::new();
-        app.handle_key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('7'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Cores);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Temp);
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Time);
@@ -332,7 +342,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Temp);
+        assert_eq!(app.active_tab, Tab::Cores);
     }
 
     #[test]
@@ -350,6 +360,8 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Net);
         app.handle_key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Temp);
+        app.handle_key(KeyEvent::new(KeyCode::Char('7'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Cores);
     }
 
     #[test]

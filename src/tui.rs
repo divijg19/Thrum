@@ -15,6 +15,7 @@ fn tab_color(tab: Tab) -> Color {
         Tab::Files => Color::Magenta,
         Tab::Time => Color::Gray,
         Tab::Temp => Color::Red,
+        Tab::Cores => Color::Blue,
     }
 }
 
@@ -70,7 +71,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .gauge_style(Style::new().fg(Color::Cyan))
         .percent(mem_pct)
         .label(format!(
-            "Mem: {mem_pct_f:.1}%  {mem_used_gb:.1}/{mem_total_gb:.1} GB"
+            "Mem: {mem_pct_f:.1}%  {mem_used_gb:.1}/{mem_total_gb:.1} GiB"
         ));
     frame.render_widget(&mem_g, mem_area);
 
@@ -80,7 +81,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         let total_gb = samples.swap_total as f64 / 1_073_741_824.0;
         (
             pct as u16,
-            format!("Swap: {pct:.1}%  {used_gb:.1}/{total_gb:.1} GB"),
+            format!("Swap: {pct:.1}%  {used_gb:.1}/{total_gb:.1} GiB"),
         )
     } else {
         (0, "Swap: N/A".to_string())
@@ -226,6 +227,30 @@ fn render_temp(frame: &mut Frame, area: Rect, samples: &Samples) {
         .header(Row::new(vec!["Sensor", "Temp", "Max", "Critical"]))
         .block(Block::bordered().title(" Temperature "));
     frame.render_widget(table, area);
+}
+
+fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
+    let block = Block::bordered().title(" Per-Core CPU ");
+    frame.render_widget(&block, area);
+    let inner = block.inner(area);
+
+    let core_count = samples.cpus.len();
+    if core_count == 0 {
+        return;
+    }
+
+    let constraints = vec![Constraint::Length(1); core_count];
+    let chunks = Layout::vertical(&constraints).split(inner);
+
+    for (i, cpu) in samples.cpus.iter().enumerate() {
+        if let Some(chunk) = chunks.get(i) {
+            let gauge = Gauge::default()
+                .gauge_style(Style::new().fg(Color::Blue))
+                .percent(cpu.usage as u16)
+                .label(format!("{}  {:.1}%  {}MHz", cpu.label, cpu.usage, cpu.freq));
+            frame.render_widget(&gauge, *chunk);
+        }
+    }
 }
 
 fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -449,7 +474,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("  ?            Toggle help           Ctrl+S          Toggle sidebar"),
         Line::from("  Tab          Next tab               Shift+Tab       Previous tab"),
-        Line::from("  1-6          Jump to tab"),
+        Line::from(format!("  1-{}          Jump to tab", Tab::ALL.len())),
         Line::from("  /            Search (Proc tab)      Esc/Enter       Cancel/Confirm"),
         Line::from("  n            Sort by name            p               Sort by PID"),
         Line::from("  c            Sort by CPU             m               Sort by memory"),
@@ -519,6 +544,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Files => render_files(frame, tab_area, samples),
         Tab::Time => render_time(frame, tab_area, samples),
         Tab::Temp => render_temp(frame, tab_area, samples),
+        Tab::Cores => render_cores(frame, tab_area, samples),
     }
 
     let status = Paragraph::new(if app.help_visible {
@@ -617,6 +643,7 @@ mod tests {
         assert_eq!(tab_color(Tab::Files), Color::Magenta);
         assert_eq!(tab_color(Tab::Time), Color::Gray);
         assert_eq!(tab_color(Tab::Temp), Color::Red);
+        assert_eq!(tab_color(Tab::Cores), Color::Blue);
     }
 
     #[test]
