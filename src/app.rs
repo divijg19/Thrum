@@ -3,7 +3,7 @@ use std::env;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcSortField {
     Name,
     Pid,
@@ -11,7 +11,7 @@ pub enum ProcSortField {
     Memory,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
     Dash,
     Proc,
@@ -24,27 +24,27 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
-        Tab::Dash,
-        Tab::Proc,
-        Tab::Net,
-        Tab::Files,
-        Tab::Time,
-        Tab::Temp,
-        Tab::Cores,
-        Tab::Disk,
+    pub const ALL: [Self; 8] = [
+        Self::Dash,
+        Self::Proc,
+        Self::Net,
+        Self::Files,
+        Self::Time,
+        Self::Temp,
+        Self::Cores,
+        Self::Disk,
     ];
 
-    pub fn label(&self) -> &str {
+    pub const fn label(&self) -> &str {
         match self {
-            Tab::Dash => "Dash",
-            Tab::Proc => "Proc",
-            Tab::Net => "Net",
-            Tab::Files => "Files",
-            Tab::Time => "Time",
-            Tab::Temp => "Temp",
-            Tab::Cores => "Cores",
-            Tab::Disk => "Disk",
+            Self::Dash => "Dash",
+            Self::Proc => "Proc",
+            Self::Net => "Net",
+            Self::Files => "Files",
+            Self::Time => "Time",
+            Self::Temp => "Temp",
+            Self::Cores => "Cores",
+            Self::Disk => "Disk",
         }
     }
 }
@@ -89,7 +89,7 @@ impl App {
         }
     }
 
-    pub fn apply_config(&mut self, cfg: &Config) {
+    pub const fn apply_config(&mut self, cfg: &Config) {
         self.active_tab = cfg.default_tab;
         self.sidebar_visible = !cfg.hide_sidebar;
     }
@@ -271,10 +271,10 @@ pub fn parse_args() -> Config {
 }
 
 pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
-    deque.push_back(value);
     if deque.len() >= max {
         deque.pop_front();
     }
+    deque.push_back(value);
 }
 
 #[cfg(test)]
@@ -311,6 +311,8 @@ mod tests {
         assert_eq!(app.mem_history.len(), 0);
         assert_eq!(app.net_rx_history.len(), 0);
         assert_eq!(app.net_tx_history.len(), 0);
+        assert_eq!(app.disk_read_history.len(), 0);
+        assert_eq!(app.disk_write_history.len(), 0);
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
         assert!(!app.help_visible);

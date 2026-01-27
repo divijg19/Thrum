@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, T
 use crate::app::{App, ProcSortField, Tab};
 use crate::samplers::{ProcessInfo, Samples};
 
-fn tab_color(tab: Tab) -> Color {
+const fn tab_color(tab: Tab) -> Color {
     match tab {
         Tab::Dash => Color::Green,
         Tab::Proc => Color::Cyan,
@@ -146,10 +146,10 @@ fn format_disk_size(bytes: u64) -> String {
 }
 
 fn format_temp(temp: Option<f32>) -> String {
-    match temp.filter(|t| t.is_finite()) {
-        Some(t) => format!("{:>8}", format!("{:.1}°C", t)),
-        None => format!("{:>8}", "N/A"),
-    }
+    temp.filter(|t| t.is_finite()).map_or_else(
+        || format!("{:>8}", "N/A"),
+        |t| format!("{:>8}", format!("{:.1}°C", t)),
+    )
 }
 
 fn format_uptime(secs: u64) -> String {
@@ -386,7 +386,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Interface", "RX", "TX", "State"]))
+        .header(Row::new(vec!["Interface", "RX Total", "TX Total", "State"]))
         .block(Block::bordered().title(" Network I/O "));
     frame.render_widget(table, table_area);
 
