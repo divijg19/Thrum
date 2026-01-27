@@ -1,4 +1,7 @@
-use sysinfo::{Components, Disks, InterfaceOperationalState, Networks, ProcessesToUpdate, System};
+use sysinfo::{
+    Components, Disks, InterfaceOperationalState, Networks, ProcessStatus, ProcessesToUpdate,
+    System,
+};
 
 pub struct ProcessInfo {
     pub name: String,
@@ -38,6 +41,12 @@ pub struct CpuInfo {
     pub freq: u64,
 }
 
+pub struct DiskIoInfo {
+    pub mount_point: String,
+    pub read_rate: u64,
+    pub write_rate: u64,
+}
+
 pub struct TempInfo {
     pub label: String,
     pub temperature: Option<f32>,
@@ -60,6 +69,7 @@ pub struct Samples {
     pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
     pub cpus: Vec<CpuInfo>,
+    pub disk_io: Vec<DiskIoInfo>,
     pub temperatures: Vec<TempInfo>,
     pub sys_info: SysInfo,
 }
@@ -122,7 +132,7 @@ impl Samplers {
                     pid: pid.as_u32(),
                     cpu: p.cpu_usage(),
                     memory: p.memory(),
-                    status: format!("{:?}", p.status()),
+                    status: format_status(p.status()).to_string(),
                 })
                 .collect()
         } else {
@@ -179,6 +189,20 @@ impl Samplers {
 
         disks.sort_by(|a, b| a.mount.cmp(&b.mount));
 
+        let disk_io: Vec<DiskIoInfo> = self
+            .disks
+            .list()
+            .iter()
+            .map(|d| {
+                let usage = d.usage();
+                DiskIoInfo {
+                    mount_point: d.mount_point().display().to_string(),
+                    read_rate: usage.read_bytes,
+                    write_rate: usage.written_bytes,
+                }
+            })
+            .collect();
+
         let mut temperatures: Vec<TempInfo> = self
             .components
             .iter()
@@ -228,9 +252,23 @@ impl Samplers {
             interfaces,
             disks,
             cpus,
+            disk_io,
             temperatures,
             sys_info,
         }
+    }
+}
+
+fn format_status(status: ProcessStatus) -> &'static str {
+    match status {
+        ProcessStatus::Run => "Running",
+        ProcessStatus::Sleep => "Sleep",
+        ProcessStatus::Idle => "Idle",
+        ProcessStatus::Stop => "Stopped",
+        ProcessStatus::Zombie => "Zombie",
+        ProcessStatus::Dead => "Dead",
+        ProcessStatus::UninterruptibleDiskSleep => "Disk",
+        _ => "?",
     }
 }
 
@@ -262,5 +300,17 @@ mod tests {
         assert_eq!(info.label, "cpu0");
         assert!((info.usage - 42.5).abs() < f32::EPSILON);
         assert_eq!(info.freq, 3400);
+    }
+
+    #[test]
+    fn disk_io_info_fields() {
+        let info = DiskIoInfo {
+            mount_point: String::from("/"),
+            read_rate: 1024,
+            write_rate: 2048,
+        };
+        assert_eq!(info.mount_point, "/");
+        assert_eq!(info.read_rate, 1024);
+        assert_eq!(info.write_rate, 2048);
     }
 }
