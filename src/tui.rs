@@ -41,11 +41,12 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
-    let [_, gauges, cpu_spark, mem_spark, load, _] = Layout::vertical([
+    let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(3),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
     ])
@@ -115,6 +116,27 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     .alignment(Alignment::Center)
     .gray();
     frame.render_widget(&l, load);
+
+    let total_disk_read: u64 = samples.disk_io.iter().map(|d| d.read_rate).sum();
+    let total_disk_write: u64 = samples.disk_io.iter().map(|d| d.write_rate).sum();
+    let s = Paragraph::new(Line::from(vec![
+        Span::styled("Net ", Style::new().bold()),
+        Span::raw(format!(
+            "TX {}  RX {}",
+            format_bytes(samples.net_tx_rate).trim(),
+            format_bytes(samples.net_rx_rate).trim(),
+        )),
+        Span::raw("  "),
+        Span::styled("Disk ", Style::new().bold()),
+        Span::raw(format!(
+            "R {}  W {}",
+            format_bytes(total_disk_read).trim(),
+            format_bytes(total_disk_write).trim(),
+        )),
+    ]))
+    .alignment(Alignment::Center)
+    .gray();
+    frame.render_widget(&s, summary);
 }
 
 fn format_bytes(bytes: u64) -> String {

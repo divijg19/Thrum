@@ -221,6 +221,7 @@ pub fn parse_args() -> Config {
                     "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk)"
                 );
                 eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
+                eprintln!("  -V, --version         Show version");
                 eprintln!("  --help                Show this help");
                 std::process::exit(0);
             }
@@ -262,6 +263,10 @@ pub fn parse_args() -> Config {
             }
             "-s" | "--no-sidebar" => {
                 hide_sidebar = true;
+            }
+            "-V" | "--version" => {
+                println!("thrum {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
             }
             _ => {
                 eprintln!("error: unknown flag '{}'", args[i]);
