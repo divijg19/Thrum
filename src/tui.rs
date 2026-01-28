@@ -214,11 +214,15 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
             Span::styled("Uptime      ", Style::new().bold()),
             Span::raw(format_uptime(samples.sys_info.uptime)),
         ]),
+        Line::from(vec![
+            Span::styled("CPUs        ", Style::new().bold()),
+            Span::raw(format!("{}", samples.sys_info.cpu_count)),
+        ]),
     ];
 
     let [_, info, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(5),
+        Constraint::Length(6),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -227,7 +231,7 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
     frame.render_widget(&p, info);
 }
 
-fn render_temp(frame: &mut Frame, area: Rect, samples: &Samples) {
+fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
         Constraint::Length(8),
@@ -251,10 +255,19 @@ fn render_temp(frame: &mut Frame, area: Rect, samples: &Samples) {
         })
         .collect();
 
+    let [table_area, spark_area] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(area);
+
     let table = Table::new(rows, widths)
         .header(Row::new(vec!["Sensor", "Temp", "Max", "Critical"]))
         .block(Block::bordered().title(" Temperature "));
-    frame.render_widget(table, area);
+    frame.render_widget(table, table_area);
+
+    let ts = Sparkline::default()
+        .block(Block::bordered().title(" History "))
+        .data(&app.temp_history)
+        .style(Style::new().fg(Color::Red));
+    frame.render_widget(&ts, spark_area);
 }
 
 fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -281,7 +294,7 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
     }
 }
 
-fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
+fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let widths: [Constraint; 6] = [
         Constraint::Fill(1),
         Constraint::Length(6),
@@ -315,12 +328,21 @@ fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
         })
         .collect();
 
+    let [table_area, spark_area] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(area);
+
     let table = Table::new(rows, widths)
         .header(Row::new(vec![
             "Mount", "FS", "Size", "Avail", "Use%", "Kind",
         ]))
         .block(Block::bordered().title(" Filesystems "));
-    frame.render_widget(table, area);
+    frame.render_widget(table, table_area);
+
+    let fus = Sparkline::default()
+        .block(Block::bordered().title(" Usage "))
+        .data(&app.disk_usage_history)
+        .style(Style::new().fg(Color::Magenta));
+    frame.render_widget(&fus, spark_area);
 }
 
 fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -619,9 +641,9 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
             app.proc_sort_asc,
         ),
         Tab::Net => render_net(frame, tab_area, app, samples),
-        Tab::Files => render_files(frame, tab_area, samples),
+        Tab::Files => render_files(frame, tab_area, app, samples),
         Tab::Time => render_time(frame, tab_area, samples),
-        Tab::Temp => render_temp(frame, tab_area, samples),
+        Tab::Temp => render_temp(frame, tab_area, app, samples),
         Tab::Cores => render_cores(frame, tab_area, samples),
         Tab::Disk => render_disk(frame, tab_area, app, samples),
     }

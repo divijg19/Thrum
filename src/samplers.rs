@@ -35,6 +35,7 @@ pub struct SysInfo {
     pub kernel: String,
     pub arch: String,
     pub uptime: u64,
+    pub cpu_count: usize,
 }
 
 pub struct CpuInfo {
@@ -241,6 +242,7 @@ impl Samplers {
             kernel: self.kernel.clone(),
             arch: self.arch.clone(),
             uptime: System::uptime(),
+            cpu_count: self.sys.cpus().len(),
         };
 
         let cpus: Vec<CpuInfo> = self
@@ -303,10 +305,12 @@ mod tests {
             kernel: String::from("test"),
             arch: String::from("x86_64"),
             uptime: 86400,
+            cpu_count: 4,
         };
         assert_eq!(info.hostname, "test");
         assert_eq!(info.arch, "x86_64");
         assert_eq!(info.uptime, 86400);
+        assert_eq!(info.cpu_count, 4);
     }
 
     #[test]
