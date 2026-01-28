@@ -386,7 +386,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Interface", "RX Total", "TX Total", "State"]))
+        .header(Row::new(vec!["Interface", "RX", "TX", "State"]))
         .block(Block::bordered().title(" Network I/O "));
     frame.render_widget(table, table_area);
 
