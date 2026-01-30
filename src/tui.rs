@@ -17,6 +17,7 @@ const fn tab_color(tab: Tab) -> Color {
         Tab::Temp => Color::Red,
         Tab::Cores => Color::Blue,
         Tab::Disk => Color::White,
+        Tab::Mem => Color::LightBlue,
     }
 }
 
@@ -229,6 +230,94 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
 
     let p = Paragraph::new(lines).fg(Color::Gray);
     frame.render_widget(&p, info);
+}
+
+fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+    let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
+    let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
+    let mem_avail_gb = samples.mem_available as f64 / 1_073_741_824.0;
+    let mem_free_gb = samples.mem_free as f64 / 1_073_741_824.0;
+
+    let mem_used_pct = if samples.mem_total > 0 {
+        samples.mem_used as f64 / samples.mem_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let mem_avail_pct = if samples.mem_total > 0 {
+        samples.mem_available as f64 / samples.mem_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let mem_free_pct = if samples.mem_total > 0 {
+        samples.mem_free as f64 / samples.mem_total as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let swap_total_gb = samples.swap_total as f64 / 1_073_741_824.0;
+    let swap_used_gb = samples.swap_used as f64 / 1_073_741_824.0;
+    let swap_free = samples.swap_total - samples.swap_used;
+    let swap_free_gb = swap_free as f64 / 1_073_741_824.0;
+
+    let swap_used_pct = if samples.swap_total > 0 {
+        samples.swap_used as f64 / samples.swap_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let swap_free_pct = if samples.swap_total > 0 {
+        swap_free as f64 / samples.swap_total as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Memory      ", Style::new().bold()),
+            Span::raw(format!("{mem_total_gb:.1} GiB")),
+        ]),
+        Line::from(vec![
+            Span::styled("Used        ", Style::new().bold()),
+            Span::raw(format!("{mem_used_gb:.1} GiB  {mem_used_pct:.1}%")),
+        ]),
+        Line::from(vec![
+            Span::styled("Available   ", Style::new().bold()),
+            Span::raw(format!("{mem_avail_gb:.1} GiB  {mem_avail_pct:.1}%")),
+        ]),
+        Line::from(vec![
+            Span::styled("Free        ", Style::new().bold()),
+            Span::raw(format!("{mem_free_gb:.1} GiB  {mem_free_pct:.1}%")),
+        ]),
+        Line::from(Span::raw("")),
+        Line::from(vec![
+            Span::styled("Swap        ", Style::new().bold()),
+            Span::raw(format!("{swap_total_gb:.1} GiB")),
+        ]),
+        Line::from(vec![
+            Span::styled("Used        ", Style::new().bold()),
+            Span::raw(format!("{swap_used_gb:.1} GiB  {swap_used_pct:.1}%")),
+        ]),
+        Line::from(vec![
+            Span::styled("Free        ", Style::new().bold()),
+            Span::raw(format!("{swap_free_gb:.1} GiB  {swap_free_pct:.1}%")),
+        ]),
+    ];
+
+    let [_, info, spark, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(8),
+        Constraint::Length(3),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
+    let p = Paragraph::new(lines).fg(Color::Gray);
+    frame.render_widget(&p, info);
+
+    let ms = Sparkline::default()
+        .block(Block::bordered().title(" History "))
+        .data(&app.mem_history)
+        .style(Style::new().fg(Color::LightBlue));
+    frame.render_widget(&ms, spark);
 }
 
 fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -689,7 +778,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
 
     let content_area = if app.sidebar_visible {
         let [sidebar_area, content_area] =
-            Layout::horizontal([Constraint::Length(8), Constraint::Fill(1)]).areas(inner);
+            Layout::horizontal([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
         render_sidebar(frame, sidebar_area, app);
         content_area
     } else {
@@ -717,6 +806,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Temp => render_temp(frame, tab_area, app, samples),
         Tab::Cores => render_cores(frame, tab_area, samples),
         Tab::Disk => render_disk(frame, tab_area, app, samples),
+        Tab::Mem => render_mem(frame, tab_area, app, samples),
     }
 
     let status = Paragraph::new(if app.help_visible {
@@ -823,6 +913,7 @@ mod tests {
         assert_eq!(tab_color(Tab::Temp), Color::Red);
         assert_eq!(tab_color(Tab::Cores), Color::Blue);
         assert_eq!(tab_color(Tab::Disk), Color::White);
+        assert_eq!(tab_color(Tab::Mem), Color::LightBlue);
     }
 
     #[test]
