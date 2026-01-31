@@ -360,9 +360,10 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         ]),
     ];
 
-    let [_, info, spark, _] = Layout::vertical([
+    let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(8),
+        Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Fill(1),
     ])
@@ -375,7 +376,13 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .block(Block::bordered().title(" History "))
         .data(&app.mem_history)
         .style(Style::new().fg(Color::LightBlue));
-    frame.render_widget(&ms, spark);
+    frame.render_widget(&ms, mem_spark);
+
+    let ss = Sparkline::default()
+        .block(Block::bordered().title(" Swap "))
+        .data(&app.swap_history)
+        .style(Style::new().fg(Color::Yellow));
+    frame.render_widget(&ss, swap_spark);
 }
 
 fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
