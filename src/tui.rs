@@ -676,7 +676,7 @@ fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'s
     if asc { "\u{2191}" } else { "\u{2193}" }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_proc(
     frame: &mut Frame,
     area: Rect,
@@ -723,6 +723,8 @@ fn render_proc(
             ProcSortField::Pid => a.pid.cmp(&b.pid),
             ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
             ProcSortField::Memory => a.memory.cmp(&b.memory),
+            ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
+            ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
             ProcSortField::Status => a.status.cmp(&b.status),
         };
         if sort_asc { ord } else { ord.reverse() }
@@ -735,10 +737,12 @@ fn render_proc(
     let end = count.min(start + max_visible);
     let visible = &filtered[start..end];
 
-    let widths: [Constraint; 5] = [
+    let widths: [Constraint; 7] = [
         Constraint::Fill(1),
         Constraint::Length(7),
         Constraint::Length(7),
+        Constraint::Length(10),
+        Constraint::Length(10),
         Constraint::Length(10),
         Constraint::Length(10),
     ];
@@ -751,6 +755,11 @@ fn render_proc(
             } else {
                 format!("{:.0}MiB", p.memory as f64 / 1_048_576.0)
             };
+            let virt_label = if p.virtual_memory >= 1_073_741_824 {
+                format!("{:.1}GiB", p.virtual_memory as f64 / 1_073_741_824.0)
+            } else {
+                format!("{:.0}MiB", p.virtual_memory as f64 / 1_048_576.0)
+            };
             Row::new(vec![
                 Cell::from(p.name.as_str()),
                 Cell::from(format!("{}", p.pid)),
@@ -759,6 +768,8 @@ fn render_proc(
                     Style::new().fg(Color::Green),
                 )),
                 Cell::from(Span::styled(mem_label, Style::new().fg(Color::Cyan))),
+                Cell::from(Span::styled(virt_label, Style::new().fg(Color::Magenta))),
+                Cell::from(format_uptime(p.run_time)),
                 Cell::from(p.status.as_str()),
             ])
         })
@@ -783,6 +794,14 @@ fn render_proc(
                 sort_arrow(ProcSortField::Memory, sort_field, sort_asc)
             ),
             format!(
+                "Virtual{}",
+                sort_arrow(ProcSortField::VirtualMemory, sort_field, sort_asc)
+            ),
+            format!(
+                "Time{}",
+                sort_arrow(ProcSortField::RunTime, sort_field, sort_asc)
+            ),
+            format!(
                 "Status{}",
                 sort_arrow(ProcSortField::Status, sort_field, sort_asc)
             ),
@@ -804,6 +823,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  /            Search / Filter       Esc             Clear"),
         Line::from("  n            Sort by name            p               Sort by PID"),
         Line::from("  c            Sort by CPU             m               Sort by memory"),
+        Line::from("  v            Sort by virtual mem     t               Sort by run time"),
         Line::from("  s            Sort by status          r               Toggle order"),
         Line::from("  \u{2191}/\u{2193}    Scroll (Proc)           PgUp/PgDn       Page scroll"),
         Line::from("  q            Quit"),

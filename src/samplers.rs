@@ -10,6 +10,8 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub cpu: f32,
     pub memory: u64,
+    pub virtual_memory: u64,
+    pub run_time: u64,
     pub status: String,
 }
 
@@ -138,6 +140,8 @@ impl Samplers {
                     pid: pid.as_u32(),
                     cpu: p.cpu_usage(),
                     memory: p.memory(),
+                    virtual_memory: p.virtual_memory(),
+                    run_time: p.run_time(),
                     status: format_status(p.status()).to_string(),
                 })
                 .collect()
