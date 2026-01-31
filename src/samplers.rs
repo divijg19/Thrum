@@ -20,6 +20,8 @@ pub struct NetInfo {
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub state: String,
+    pub mac: String,
+    pub ip: String,
 }
 
 pub struct DiskInfo {
@@ -149,7 +151,7 @@ impl Samplers {
             vec![]
         };
 
-        let mut raw: Vec<(String, u64, u64, InterfaceOperationalState)> = self
+        let mut raw: Vec<(String, u64, u64, InterfaceOperationalState, String, String)> = self
             .networks
             .iter()
             .map(|(name, data)| {
@@ -158,6 +160,10 @@ impl Samplers {
                     data.total_received(),
                     data.total_transmitted(),
                     data.operational_state(),
+                    data.mac_address().to_string(),
+                    data.ip_networks()
+                        .first()
+                        .map_or(String::new(), ToString::to_string),
                 )
             })
             .collect();
@@ -166,7 +172,7 @@ impl Samplers {
         let mut interfaces = Vec::with_capacity(raw.len());
         let mut net_rx_rate = 0u64;
         let mut net_tx_rate = 0u64;
-        for (name, rx_cum, tx_cum, state) in raw {
+        for (name, rx_cum, tx_cum, state, mac, ip) in raw {
             let prev_rx = self.prev_iface_rx.entry(name.clone()).or_insert(rx_cum);
             let prev_tx = self.prev_iface_tx.entry(name.clone()).or_insert(tx_cum);
             let rx_rate = rx_cum.saturating_sub(*prev_rx);
@@ -186,6 +192,8 @@ impl Samplers {
                     _ => "?",
                 }
                 .to_string(),
+                mac,
+                ip,
             });
         }
 
@@ -361,10 +369,14 @@ mod tests {
             rx_bytes: 1024,
             tx_bytes: 2048,
             state: String::from("Up"),
+            mac: String::from("00:11:22:33:44:55"),
+            ip: String::from("192.168.1.1/24"),
         };
         assert_eq!(info.name, "eth0");
         assert_eq!(info.rx_bytes, 1024);
         assert_eq!(info.tx_bytes, 2048);
         assert_eq!(info.state, "Up");
+        assert_eq!(info.mac, "00:11:22:33:44:55");
+        assert_eq!(info.ip, "192.168.1.1/24");
     }
 }

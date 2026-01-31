@@ -640,19 +640,30 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
                     Style::new().fg(Color::Yellow),
                 )),
                 Cell::from(iface.state.as_str()),
+                Cell::from(iface.mac.as_str()),
+                Cell::from(iface.ip.as_str()),
             ])
         })
         .collect();
 
-    let widths: [Constraint; 4] = [
+    let widths: [Constraint; 6] = [
         Constraint::Fill(1),
         Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Length(8),
+        Constraint::Length(17),
+        Constraint::Fill(1),
     ];
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Interface", "RX", "TX", "State"]))
+        .header(Row::new(vec![
+            "Interface",
+            "RX",
+            "TX",
+            "State",
+            "MAC",
+            "IP",
+        ]))
         .block(Block::bordered().title(" Network I/O "));
     frame.render_widget(table, table_area);
 
