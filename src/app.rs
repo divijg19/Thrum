@@ -4,6 +4,7 @@ use std::env;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub const PAGE_SIZE: usize = 10;
+pub const WINDOW: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcSortField {
@@ -88,15 +89,15 @@ impl App {
         Self {
             active_tab: Tab::Dash,
             sidebar_visible: true,
-            cpu_history: VecDeque::with_capacity(60),
-            mem_history: VecDeque::with_capacity(60),
-            net_rx_history: VecDeque::with_capacity(60),
-            net_tx_history: VecDeque::with_capacity(60),
-            disk_read_history: VecDeque::with_capacity(60),
-            disk_write_history: VecDeque::with_capacity(60),
-            temp_history: VecDeque::with_capacity(60),
-            disk_usage_history: VecDeque::with_capacity(60),
-            swap_history: VecDeque::with_capacity(60),
+            cpu_history: VecDeque::with_capacity(WINDOW),
+            mem_history: VecDeque::with_capacity(WINDOW),
+            net_rx_history: VecDeque::with_capacity(WINDOW),
+            net_tx_history: VecDeque::with_capacity(WINDOW),
+            disk_read_history: VecDeque::with_capacity(WINDOW),
+            disk_write_history: VecDeque::with_capacity(WINDOW),
+            temp_history: VecDeque::with_capacity(WINDOW),
+            disk_usage_history: VecDeque::with_capacity(WINDOW),
+            swap_history: VecDeque::with_capacity(WINDOW),
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
@@ -303,7 +304,7 @@ pub fn parse_args() -> Config {
                 eprintln!("Usage: thrum [OPTIONS]");
                 eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
                 eprintln!(
-                    "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk)"
+                    "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)"
                 );
                 eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
                 eprintln!("  -V, --version         Show version");
@@ -340,6 +341,7 @@ pub fn parse_args() -> Config {
                     "temp" => Tab::Temp,
                     "cores" => Tab::Cores,
                     "disk" => Tab::Disk,
+                    "mem" => Tab::Mem,
                     _ => {
                         eprintln!("error: unknown tab '{name}'");
                         std::process::exit(1);
