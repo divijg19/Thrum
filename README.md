@@ -20,6 +20,18 @@ A terminal-native observatory for your machine.
 +--------+---------------------------------------------------------+
 ```
 
+## Configuration
+
+Create `~/.config/thrum/config.toml` (or use `$XDG_CONFIG_HOME`):
+
+```toml
+refresh_ms = 500
+default_tab = "proc"
+hide_sidebar = true
+```
+
+CLI flags override config file values.
+
 ```sh
 cargo run
 ```

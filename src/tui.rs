@@ -875,7 +875,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     let status = Paragraph::new(if app.help_visible {
         " ? Close help"
     } else {
-        " ? Help | q Quit | Tab | Shift+Tab | Ctrl+S Sidebar"
+        " ? Help | q / Ctrl+C Quit | Tab | Shift+Tab | Ctrl+S Sidebar"
     })
     .fg(Color::Gray);
     frame.render_widget(&status, status_area);
