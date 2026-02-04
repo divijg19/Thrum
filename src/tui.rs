@@ -237,6 +237,18 @@ fn format_timestamp(secs: u64) -> String {
     )
 }
 
+fn filter_processes<'a>(query: &str, processes: &'a [ProcessInfo]) -> Vec<&'a ProcessInfo> {
+    if query.is_empty() {
+        return processes.iter().collect();
+    }
+    let q = query.to_lowercase();
+    let query_pid = query.parse::<u32>().ok();
+    processes
+        .iter()
+        .filter(|p| p.name.to_lowercase().contains(&q) || query_pid.is_some_and(|pid| p.pid == pid))
+        .collect()
+}
+
 fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) -> Rect {
     let (search_area, remaining) = if !query.is_empty() || focused {
         let [s, r] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
@@ -709,6 +721,33 @@ fn render_help(frame: &mut Frame, area: Rect) {
     frame.render_widget(&p, centered);
 }
 
+fn status_bar_text(app: &App) -> String {
+    if let Some(ref fb) = app.kill_feedback {
+        return fb.clone();
+    }
+    if app.help_visible {
+        return " ? Close help".to_string();
+    }
+    if app.kill_pending && !app.kill_is_sigkill {
+        return " Kill? y/Y Yes | any key Cancel".to_string();
+    }
+    let mut parts: Vec<&str> = vec![" ? Help", " q/Ctrl+C Quit"];
+    let sidebar_hint = if app.sidebar_visible {
+        "Ctrl+S Hide Sidebar"
+    } else {
+        "Ctrl+S Show Sidebar"
+    };
+    parts.push(sidebar_hint);
+    if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+        parts.push("/ Search");
+    }
+    if app.active_tab == Tab::Proc {
+        parts.push("Delete Kill");
+        parts.push("Ctrl+K Kill!");
+    }
+    parts.join(" | ")
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let block = if app.sidebar_visible {
@@ -734,17 +773,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     match app.active_tab {
         Tab::Dash => render_dash(frame, tab_area, app, samples),
         Tab::Proc => {
-            let has_query = !app.proc_query.is_empty();
-            let mut filtered: Vec<&ProcessInfo> = if has_query {
-                let q = app.proc_query.to_lowercase();
-                samples
-                    .processes
-                    .iter()
-                    .filter(|p| p.name.to_lowercase().contains(&q))
-                    .collect()
-            } else {
-                samples.processes.iter().collect()
-            };
+            let mut filtered = filter_processes(&app.proc_query, &samples.processes);
 
             filtered.sort_unstable_by(|a, b| {
                 let ord = match app.proc_sort_field {
@@ -898,15 +927,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         Tab::Mem => render_mem(frame, tab_area, app, samples),
     }
 
-    let status = Paragraph::new(if app.help_visible {
-        " ? Close help"
-    } else if app.kill_pending && !app.kill_is_sigkill {
-        " Kill? y/Y Yes | any key Cancel"
-    } else {
-        " ? Help | q / Ctrl+C Quit | Tab | Shift+Tab | Ctrl+S Sidebar | Delete Kill | Ctrl+K Kill!"
-    })
-    .fg(Color::Gray);
+    let status = Paragraph::new(status_bar_text(app)).fg(Color::Gray);
     frame.render_widget(&status, status_area);
+
+    if app.kill_feedback.is_some() {
+        if let Some(ref fb) = app.kill_feedback {
+            render_kill_feedback(frame, tab_area, fb);
+        }
+        app.kill_feedback = None;
+    }
 
     if app.help_visible {
         render_help(frame, tab_area);
@@ -917,6 +946,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         let name = app.selected_name.as_deref().unwrap_or("?");
         render_kill_confirm(frame, tab_area, pid, name);
     }
+}
+
+fn render_kill_feedback(frame: &mut Frame, area: Rect, feedback: &str) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(format!("  {feedback}  ")),
+        Line::from(""),
+    ];
+
+    let height = lines.len() as u16 + 2;
+    let [_, inner, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
+    let [_, centered, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Min(30),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+
+    let p = Paragraph::new(lines)
+        .block(Block::bordered().title(" Kill Result "))
+        .fg(Color::Gray);
+    frame.render_widget(&p, centered);
 }
 
 fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
@@ -1064,5 +1121,151 @@ mod tests {
     #[test]
     fn format_temp_large() {
         assert_eq!(format_temp(Some(100.5)), " 100.5°C");
+    }
+
+    #[test]
+    fn filter_processes_by_name() {
+        let p1 = ProcessInfo {
+            name: "firefox".into(),
+            pid: 100,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Running".into(),
+        };
+        let p2 = ProcessInfo {
+            name: "bash".into(),
+            pid: 200,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Sleep".into(),
+        };
+        let procs = vec![p1, p2];
+        let result = filter_processes("fire", &procs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pid, 100);
+    }
+
+    #[test]
+    fn filter_processes_by_pid() {
+        let p1 = ProcessInfo {
+            name: "firefox".into(),
+            pid: 100,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Running".into(),
+        };
+        let p2 = ProcessInfo {
+            name: "bash".into(),
+            pid: 200,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Sleep".into(),
+        };
+        let procs = vec![p1, p2];
+        let result = filter_processes("200", &procs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pid, 200);
+    }
+
+    #[test]
+    fn filter_processes_empty_query_returns_all() {
+        let p1 = ProcessInfo {
+            name: "firefox".into(),
+            pid: 100,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Running".into(),
+        };
+        let p2 = ProcessInfo {
+            name: "bash".into(),
+            pid: 200,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Sleep".into(),
+        };
+        let procs = vec![p1, p2];
+        let result = filter_processes("", &procs);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_processes_name_and_pid() {
+        let p1 = ProcessInfo {
+            name: "firefox".into(),
+            pid: 100,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Running".into(),
+        };
+        let p2 = ProcessInfo {
+            name: "bash".into(),
+            pid: 200,
+            cpu: 0.0,
+            memory: 0,
+            virtual_memory: 0,
+            run_time: 0,
+            status: "Sleep".into(),
+        };
+        let procs = vec![p1, p2];
+        let result = filter_processes("100", &procs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pid, 100);
+    }
+
+    #[test]
+    fn status_bar_context_searchable_tabs() {
+        let mut app = App::new();
+        app.kill_feedback = None;
+        app.kill_pending = false;
+        app.help_visible = false;
+
+        app.active_tab = Tab::Proc;
+        let text = status_bar_text(&app);
+        assert!(text.contains("/ Search"), "Proc should have search hint");
+
+        app.active_tab = Tab::Net;
+        let text = status_bar_text(&app);
+        assert!(text.contains("/ Search"), "Net should have search hint");
+
+        app.active_tab = Tab::Files;
+        let text = status_bar_text(&app);
+        assert!(text.contains("/ Search"), "Files should have search hint");
+
+        app.active_tab = Tab::Dash;
+        let text = status_bar_text(&app);
+        assert!(!text.contains("/ Search"), "Dash must not have search hint");
+    }
+
+    #[test]
+    fn status_bar_context_kill_only_on_proc() {
+        let mut app = App::new();
+        app.kill_feedback = None;
+        app.kill_pending = false;
+        app.help_visible = false;
+
+        app.active_tab = Tab::Proc;
+        let text = status_bar_text(&app);
+        assert!(text.contains("Delete Kill"), "Proc should have kill hint");
+
+        app.active_tab = Tab::Dash;
+        let text = status_bar_text(&app);
+        assert!(
+            !text.contains("Delete Kill"),
+            "Dash should not have kill hint"
+        );
     }
 }

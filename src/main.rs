@@ -95,7 +95,12 @@ fn main() -> std::io::Result<()> {
                     Signal::Term
                 };
                 if let Some(pid) = app.selected_pid {
-                    samplers.kill_process(pid, signal);
+                    let ok = samplers.kill_process(pid, signal);
+                    app.kill_feedback = Some(if ok {
+                        format!("Killed PID {pid}")
+                    } else {
+                        format!("Failed to kill PID {pid}")
+                    });
                 }
                 app.kill_is_sigkill = false;
             }
