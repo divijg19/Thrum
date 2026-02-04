@@ -298,7 +298,7 @@ impl App {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
     pub refresh_ms: u64,
@@ -328,9 +328,7 @@ fn read_config_file(path: &Path) -> Option<Config> {
     }
 }
 
-pub fn parse_args() -> Config {
-    let args: Vec<String> = env::args().collect();
-
+pub fn parse_args(args: &[String]) -> Config {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("Usage: thrum [OPTIONS]");
         eprintln!();
@@ -352,7 +350,7 @@ pub fn parse_args() -> Config {
         std::process::exit(0);
     }
 
-    let config_path = (1..args.len())
+    let config_path = (0..args.len())
         .rfind(|&i| args[i] == "--config" || args[i] == "-c")
         .and_then(|i| args.get(i + 1))
         .cloned();
@@ -376,7 +374,7 @@ pub fn parse_args() -> Config {
         },
     );
 
-    let mut i = 1;
+    let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-r" | "--refresh" => {
@@ -956,6 +954,102 @@ mod tests {
         for (i, tab) in Tab::ALL.iter().enumerate() {
             assert_eq!(tab.index(), i, "{tab:?} index should be {i}");
         }
+    }
+
+    #[test]
+    fn parse_args_short_flags() {
+        let cfg = parse_args(&[
+            "-r".into(),
+            "500".into(),
+            "-t".into(),
+            "net".into(),
+            "-s".into(),
+        ]);
+        assert_eq!(cfg.refresh_ms, 500);
+        assert_eq!(cfg.default_tab, Tab::Net);
+        assert!(cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn parse_args_long_flags() {
+        let cfg = parse_args(&[
+            "--refresh".into(),
+            "300".into(),
+            "--tab".into(),
+            "files".into(),
+            "--no-sidebar".into(),
+        ]);
+        assert_eq!(cfg.refresh_ms, 300);
+        assert_eq!(cfg.default_tab, Tab::Files);
+        assert!(cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn parse_args_partial() {
+        let cfg = parse_args(&["-r".into(), "200".into()]);
+        assert_eq!(cfg.refresh_ms, 200);
+        assert_eq!(cfg.default_tab, Tab::Dash);
+        assert!(!cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn parse_args_tab_names() {
+        for (name, tab) in [
+            ("dash", Tab::Dash),
+            ("proc", Tab::Proc),
+            ("net", Tab::Net),
+            ("files", Tab::Files),
+            ("time", Tab::Time),
+            ("temp", Tab::Temp),
+            ("cores", Tab::Cores),
+            ("disk", Tab::Disk),
+            ("mem", Tab::Mem),
+        ] {
+            let cfg = parse_args(&["-t".into(), name.into()]);
+            assert_eq!(cfg.default_tab, tab, "tab '{name}'");
+        }
+    }
+
+    #[test]
+    fn parse_args_order() {
+        let cfg1 = parse_args(&[
+            "-r".into(),
+            "500".into(),
+            "-t".into(),
+            "mem".into(),
+            "-s".into(),
+        ]);
+        assert_eq!(cfg1.refresh_ms, 500);
+        assert_eq!(cfg1.default_tab, Tab::Mem);
+        assert!(cfg1.hide_sidebar);
+        let cfg2 = parse_args(&[
+            "-s".into(),
+            "-r".into(),
+            "500".into(),
+            "-t".into(),
+            "mem".into(),
+        ]);
+        assert_eq!(cfg2, cfg1);
+        let cfg3 = parse_args(&[
+            "-t".into(),
+            "mem".into(),
+            "-s".into(),
+            "-r".into(),
+            "500".into(),
+        ]);
+        assert_eq!(cfg3, cfg1);
+    }
+
+    #[test]
+    fn parse_args_long_refresh() {
+        let cfg = parse_args(&["--refresh".into(), "500".into()]);
+        assert_eq!(cfg.refresh_ms, 500);
+    }
+
+    #[test]
+    fn parse_args_long_tab() {
+        let cfg = parse_args(&["--tab".into(), "disk".into()]);
+        assert_eq!(cfg.default_tab, Tab::Disk);
     }
 
     #[test]
