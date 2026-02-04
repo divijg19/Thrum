@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use sysinfo::{
-    Components, Disks, InterfaceOperationalState, Networks, ProcessStatus, ProcessesToUpdate,
-    System,
+    Components, Disks, InterfaceOperationalState, Networks, Pid, ProcessStatus, ProcessesToUpdate,
+    Signal, System,
 };
 
 pub struct ProcessInfo {
@@ -310,6 +310,16 @@ impl Samplers {
             temperatures,
             sys_info,
         }
+    }
+
+    pub fn kill_process(&self, pid: u32, signal: Signal) -> bool {
+        let sys_pid = Pid::from(pid as usize);
+        if sys_pid == Pid::from(std::process::id() as usize) {
+            return false;
+        }
+        self.sys
+            .process(sys_pid)
+            .is_some_and(|p| p.kill_with(signal).unwrap_or(false))
     }
 }
 

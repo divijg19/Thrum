@@ -91,6 +91,12 @@ pub struct App {
     pub disk_usage_history: VecDeque<u64>,
     pub swap_history: VecDeque<u64>,
     pub proc_scroll: usize,
+    pub proc_selection: usize,
+    pub selected_pid: Option<u32>,
+    pub selected_name: Option<String>,
+    pub kill_pending: bool,
+    pub kill_is_sigkill: bool,
+    pub kill_execute: bool,
     pub proc_query: String,
     pub proc_search_focused: bool,
     pub net_query: String,
@@ -118,6 +124,12 @@ impl App {
             disk_usage_history: VecDeque::with_capacity(WINDOW),
             swap_history: VecDeque::with_capacity(WINDOW),
             proc_scroll: 0,
+            proc_selection: 0,
+            selected_pid: None,
+            selected_name: None,
+            kill_pending: false,
+            kill_is_sigkill: false,
+            kill_execute: false,
             proc_query: String::new(),
             proc_search_focused: false,
             net_query: String::new(),
@@ -221,6 +233,16 @@ impl App {
             }
         }
 
+        if self.kill_pending {
+            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
+                self.kill_execute = true;
+                return;
+            }
+            self.kill_pending = false;
+            self.kill_is_sigkill = false;
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
             KeyCode::Char('?') => self.help_visible = !self.help_visible,
@@ -282,16 +304,29 @@ impl App {
                 self.proc_sort_asc = false;
             }
             KeyCode::Up if self.active_tab == Tab::Proc => {
-                self.proc_scroll = self.proc_scroll.saturating_sub(1);
+                self.proc_selection = self.proc_selection.saturating_sub(1);
             }
             KeyCode::Down if self.active_tab == Tab::Proc => {
-                self.proc_scroll = self.proc_scroll.saturating_add(1);
+                self.proc_selection = self.proc_selection.saturating_add(1);
             }
             KeyCode::PageUp if self.active_tab == Tab::Proc => {
-                self.proc_scroll = self.proc_scroll.saturating_sub(PAGE_SIZE);
+                self.proc_selection = self.proc_selection.saturating_sub(PAGE_SIZE);
             }
             KeyCode::PageDown if self.active_tab == Tab::Proc => {
-                self.proc_scroll = self.proc_scroll.saturating_add(PAGE_SIZE);
+                self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
+            }
+            KeyCode::Delete if self.active_tab == Tab::Proc => {
+                self.kill_pending = true;
+                self.kill_is_sigkill = false;
+                self.kill_execute = false;
+            }
+            KeyCode::Char('k')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.active_tab == Tab::Proc =>
+            {
+                self.kill_pending = true;
+                self.kill_is_sigkill = true;
+                self.kill_execute = true;
             }
             _ => {}
         }
@@ -472,6 +507,12 @@ mod tests {
         assert!(app.sidebar_visible);
         assert!(!app.should_quit);
         assert_eq!(app.proc_scroll, 0);
+        assert_eq!(app.proc_selection, 0);
+        assert!(app.selected_pid.is_none());
+        assert!(app.selected_name.is_none());
+        assert!(!app.kill_pending);
+        assert!(!app.kill_is_sigkill);
+        assert!(!app.kill_execute);
         assert!(app.proc_query.is_empty());
         assert!(!app.proc_search_focused);
         assert!(app.net_query.is_empty());
@@ -603,43 +644,123 @@ mod tests {
     }
 
     #[test]
-    fn key_up_down_scrolls_proc() {
+    fn selection_moves_down() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
+        assert_eq!(app.proc_selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 1);
+        assert_eq!(app.proc_selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 2);
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 1);
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
+        assert_eq!(app.proc_selection, 2);
     }
 
     #[test]
-    fn key_page_down_scrolls_proc() {
+    fn selection_moves_up() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
-        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, PAGE_SIZE);
-        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, PAGE_SIZE * 2);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 2);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 0);
     }
 
     #[test]
-    fn key_page_up_scrolls_proc() {
+    fn selection_page_down() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, PAGE_SIZE);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, PAGE_SIZE * 2);
+    }
+
+    #[test]
+    fn selection_page_up() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, PAGE_SIZE);
+        assert_eq!(app.proc_selection, PAGE_SIZE);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
+        assert_eq!(app.proc_selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.proc_scroll, 0);
+        assert_eq!(app.proc_selection, 0);
+    }
+
+    #[test]
+    fn selection_noop_on_non_proc() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.proc_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(!app.kill_pending);
+    }
+
+    #[test]
+    fn delete_sets_kill_pending_on_proc() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert!(!app.kill_pending);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(app.kill_pending);
+        assert!(!app.kill_is_sigkill);
+    }
+
+    #[test]
+    fn ctrl_k_sets_immediate_kill() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert!(app.kill_pending);
+        assert!(app.kill_is_sigkill);
+        assert!(app.kill_execute);
+    }
+
+    #[test]
+    fn kill_pending_dismissed_by_any_key() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(app.kill_pending);
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert!(!app.kill_pending);
+    }
+
+    #[test]
+    fn kill_pending_confirmed_by_y() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(app.kill_pending);
+        assert!(!app.kill_execute);
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(app.kill_execute);
+    }
+
+    #[test]
+    fn kill_pending_confirmed_by_capital_y() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::NONE));
+        assert!(app.kill_execute);
+    }
+
+    #[test]
+    fn delete_exits_search_and_kills() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.proc_search_focused);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert!(!app.proc_search_focused);
+        assert!(app.kill_pending);
     }
 
     #[test]

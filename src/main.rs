@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event};
 
+use sysinfo::Signal;
+
 mod app;
 mod samplers;
 mod tui;
@@ -78,12 +80,25 @@ fn main() -> std::io::Result<()> {
         };
         app::push_bounded(&mut app.swap_history, swap_pct, app::WINDOW);
 
-        terminal.draw(|f| tui::draw(f, &app, &samples))?;
+        terminal.draw(|f| tui::draw(f, &mut app, &samples))?;
 
         if event::poll(refresh)?
             && let Event::Key(key) = event::read()?
         {
             app.handle_key(key);
+            if app.kill_pending && app.kill_execute {
+                app.kill_pending = false;
+                app.kill_execute = false;
+                let signal = if app.kill_is_sigkill {
+                    Signal::Kill
+                } else {
+                    Signal::Term
+                };
+                if let Some(pid) = app.selected_pid {
+                    samplers.kill_process(pid, signal);
+                }
+                app.kill_is_sigkill = false;
+            }
             if app.should_quit {
                 break;
             }
