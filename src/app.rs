@@ -306,7 +306,18 @@ fn default_config_path() -> Option<PathBuf> {
 }
 
 fn read_config_file(path: &Path) -> Option<Config> {
-    let content = fs::read_to_string(path).ok()?;
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "warning: config file '{}' is unreadable: {e}",
+                    path.display()
+                );
+            }
+            return None;
+        }
+    };
     toml::from_str(&content)
         .inspect_err(|e| {
             eprintln!(
@@ -412,6 +423,9 @@ pub fn parse_args(args: &[String]) -> Config {
         i += 1;
     }
 
+    if cfg.refresh_ms == 0 {
+        cfg.refresh_ms = 1000;
+    }
     cfg
 }
 
@@ -425,7 +439,9 @@ pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
 fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char(c) if key.modifiers.is_empty() => {
-            query.push(c);
+            if query.len() < 256 {
+                query.push(c);
+            }
             true
         }
         KeyCode::Backspace => {

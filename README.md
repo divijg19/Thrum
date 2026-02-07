@@ -25,7 +25,7 @@ A terminal-native observatory for your machine.
 Create `~/.config/thrum/config.toml` (or use `$XDG_CONFIG_HOME`):
 
 ```toml
-refresh_ms = 500
+refresh_ms = 1000
 default_tab = "proc"
 hide_sidebar = true
 ```
