@@ -156,76 +156,25 @@ impl App {
             self.should_quit = true;
             return;
         }
-        if self.proc_search_focused && self.active_tab == Tab::Proc {
-            match key.code {
-                KeyCode::Char(c) if key.modifiers.is_empty() => {
-                    self.proc_query.push(c);
-                    return;
-                }
-                KeyCode::Backspace => {
-                    self.proc_query.pop();
-                    if self.proc_query.is_empty() {
-                        self.proc_search_focused = false;
-                    }
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.proc_query.clear();
-                    self.proc_search_focused = false;
-                    return;
-                }
-                _ => {
-                    self.proc_search_focused = false;
-                }
-            }
+        if self.proc_search_focused
+            && self.active_tab == Tab::Proc
+            && handle_search_input(&mut self.proc_query, &mut self.proc_search_focused, key)
+        {
+            return;
         }
 
-        if self.net_search_focused && self.active_tab == Tab::Net {
-            match key.code {
-                KeyCode::Char(c) if key.modifiers.is_empty() => {
-                    self.net_query.push(c);
-                    return;
-                }
-                KeyCode::Backspace => {
-                    self.net_query.pop();
-                    if self.net_query.is_empty() {
-                        self.net_search_focused = false;
-                    }
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.net_query.clear();
-                    self.net_search_focused = false;
-                    return;
-                }
-                _ => {
-                    self.net_search_focused = false;
-                }
-            }
+        if self.net_search_focused
+            && self.active_tab == Tab::Net
+            && handle_search_input(&mut self.net_query, &mut self.net_search_focused, key)
+        {
+            return;
         }
 
-        if self.files_search_focused && self.active_tab == Tab::Files {
-            match key.code {
-                KeyCode::Char(c) if key.modifiers.is_empty() => {
-                    self.files_query.push(c);
-                    return;
-                }
-                KeyCode::Backspace => {
-                    self.files_query.pop();
-                    if self.files_query.is_empty() {
-                        self.files_search_focused = false;
-                    }
-                    return;
-                }
-                KeyCode::Esc => {
-                    self.files_query.clear();
-                    self.files_search_focused = false;
-                    return;
-                }
-                _ => {
-                    self.files_search_focused = false;
-                }
-            }
+        if self.files_search_focused
+            && self.active_tab == Tab::Files
+            && handle_search_input(&mut self.files_query, &mut self.files_search_focused, key)
+        {
+            return;
         }
 
         if self.help_visible {
@@ -477,6 +426,31 @@ pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
         deque.pop_front();
     }
     deque.push_back(value);
+}
+
+fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char(c) if key.modifiers.is_empty() => {
+            query.push(c);
+            true
+        }
+        KeyCode::Backspace => {
+            query.pop();
+            if query.is_empty() {
+                *focused = false;
+            }
+            true
+        }
+        KeyCode::Esc => {
+            query.clear();
+            *focused = false;
+            true
+        }
+        _ => {
+            *focused = false;
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1204,5 +1178,36 @@ mod tests {
                 key
             );
         }
+    }
+
+    #[test]
+    fn push_bounded_respects_capacity() {
+        let mut d: VecDeque<u32> = VecDeque::with_capacity(3);
+        push_bounded(&mut d, 1, 3);
+        push_bounded(&mut d, 2, 3);
+        push_bounded(&mut d, 3, 3);
+        assert_eq!(d.len(), 3);
+        push_bounded(&mut d, 4, 3);
+        assert_eq!(d.len(), 3);
+        assert_eq!(*d.front().unwrap(), 2);
+        assert_eq!(*d.back().unwrap(), 4);
+    }
+
+    #[test]
+    fn push_bounded_under_max_appends() {
+        let mut d: VecDeque<i32> = VecDeque::new();
+        push_bounded(&mut d, 42, 10);
+        assert_eq!(d.len(), 1);
+        assert_eq!(*d.front().unwrap(), 42);
+    }
+
+    #[test]
+    fn push_bounded_fifo_order() {
+        let mut d: VecDeque<&str> = VecDeque::with_capacity(2);
+        push_bounded(&mut d, "a", 2);
+        push_bounded(&mut d, "b", 2);
+        push_bounded(&mut d, "c", 2);
+        let v: Vec<&&str> = d.iter().collect();
+        assert_eq!(v, vec![&"b", &"c"]);
     }
 }
