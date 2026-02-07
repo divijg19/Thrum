@@ -8,6 +8,15 @@
 
 use std::time::Duration;
 
+struct TerminalGuard;
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            ratatui::restore();
+        }
+    }
+}
+
 use crossterm::event::{self, Event};
 
 mod app;
@@ -17,6 +26,7 @@ mod tui;
 fn main() -> std::io::Result<()> {
     let cfg = app::parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
     let mut terminal = ratatui::init();
+    let _guard = TerminalGuard;
     let mut app = app::App::new();
     app.apply_config(&cfg);
     let mut samplers = samplers::Samplers::new();
@@ -101,6 +111,5 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    ratatui::restore();
     Ok(())
 }
