@@ -176,23 +176,19 @@ impl App {
             self.should_quit = true;
             return;
         }
-        if self.proc_search_focused
-            && self.active_tab == Tab::Proc
-            && handle_search_input(&mut self.proc_query, &mut self.proc_search_focused, key)
-        {
-            return;
-        }
-
-        if self.net_search_focused
-            && self.active_tab == Tab::Net
-            && handle_search_input(&mut self.net_query, &mut self.net_search_focused, key)
-        {
-            return;
-        }
-
-        if self.files_search_focused
-            && self.active_tab == Tab::Files
-            && handle_search_input(&mut self.files_query, &mut self.files_search_focused, key)
+        let search_tab = |tab: Tab, focused: &mut bool, query: &mut String| -> bool {
+            *focused && self.active_tab == tab && handle_search_input(query, focused, key)
+        };
+        if search_tab(
+            Tab::Proc,
+            &mut self.proc_search_focused,
+            &mut self.proc_query,
+        ) || search_tab(Tab::Net, &mut self.net_search_focused, &mut self.net_query)
+            || search_tab(
+                Tab::Files,
+                &mut self.files_search_focused,
+                &mut self.files_query,
+            )
         {
             return;
         }
@@ -275,7 +271,7 @@ impl App {
             KeyCode::PageDown if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
             }
-            KeyCode::Delete if self.active_tab == Tab::Proc => {
+            KeyCode::Delete if self.active_tab == Tab::Proc && self.selected_pid.is_some() => {
                 self.kill_state = Some(KillState::Confirm);
             }
             KeyCode::Char('k')
@@ -692,6 +688,7 @@ mod tests {
     fn delete_sets_kill_pending_on_proc() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         assert!(app.kill_state.is_none());
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
@@ -701,6 +698,7 @@ mod tests {
     fn ctrl_k_sets_immediate_kill() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
     }
@@ -709,6 +707,7 @@ mod tests {
     fn kill_pending_dismissed_by_any_key() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
@@ -719,6 +718,7 @@ mod tests {
     fn kill_pending_confirmed_by_y() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
@@ -729,6 +729,7 @@ mod tests {
     fn kill_pending_sends_sigkill_on_ctrl_k() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
@@ -739,6 +740,7 @@ mod tests {
     fn kill_pending_confirmed_by_capital_y() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Term)));
@@ -748,6 +750,7 @@ mod tests {
     fn delete_exits_search_and_kills() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert!(app.proc_search_focused);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));

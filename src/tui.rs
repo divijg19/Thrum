@@ -733,8 +733,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
 
 struct StatusBar {
     ctx: String,
-    hints: Vec<&'static str>,
+    hints: Vec<String>,
 }
+
+const HINT_SEP: &str = " │ ";
 
 impl StatusBar {
     fn build(app: &App) -> Self {
@@ -746,41 +748,65 @@ impl StatusBar {
         }
         if app.help_visible {
             return Self {
-                ctx: " ? Close help".to_owned(),
+                ctx: "Help (? to close)".to_owned(),
                 hints: vec![],
             };
         }
         if app.kill_state == Some(KillState::Confirm) {
+            let pid = app.selected_pid.unwrap_or(0);
+            let name = app.selected_name.as_deref().unwrap_or("?");
             return Self {
-                ctx: " Kill? y/Y Yes | any key Cancel".to_owned(),
-                hints: vec![],
+                ctx: format!("Kill? PID {pid} ({name})"),
+                hints: vec!["y/Y Yes".to_owned(), "any Cancel".to_owned()],
             };
         }
-        let mut hints = vec![" ? Help", " q/Ctrl+C Quit"];
-        let sidebar = if app.sidebar_visible {
-            "Ctrl+S Hide Sidebar"
-        } else {
-            "Ctrl+S Show Sidebar"
+
+        let ctx = {
+            let label = app.active_tab.label();
+            let sort = if app.active_tab == Tab::Proc {
+                let arrow = if app.proc_sort_asc { "↑" } else { "↓" };
+                Some(format!(" [{} {:?}{}]", label, app.proc_sort_field, arrow))
+            } else {
+                None
+            };
+            sort.unwrap_or_else(|| label.to_owned())
         };
-        hints.push(sidebar);
+
+        let mut hints: Vec<String> = Vec::with_capacity(3);
+
+        let sidebar = if app.sidebar_visible { "Hide" } else { "Show" };
+        hints.push(format!("Ctrl+S {sidebar} Sidebar"));
+
         if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
-            hints.push("/ Search");
+            let focused = match app.active_tab {
+                Tab::Proc => app.proc_search_focused,
+                Tab::Net => app.net_search_focused,
+                Tab::Files => app.files_search_focused,
+                _ => false,
+            };
+            if !focused {
+                hints.push("/ Search".to_owned());
+            }
         }
-        if app.active_tab == Tab::Proc {
-            hints.push("Delete Kill");
-            hints.push("Ctrl+K Kill!");
+
+        if app.active_tab == Tab::Proc && app.selected_pid.is_some() {
+            hints.push("Delete Kill".to_owned());
+            hints.push("Ctrl+K Kill!".to_owned());
         }
-        Self {
-            ctx: String::new(),
-            hints,
+
+        if hints.len() > 4 {
+            hints.truncate(4);
         }
+
+        Self { ctx, hints }
     }
 
-    fn display(&self) -> String {
-        if !self.ctx.is_empty() {
-            return self.ctx.clone();
+    fn display(&self) -> (String, String) {
+        if self.hints.is_empty() {
+            (self.ctx.clone(), String::new())
+        } else {
+            (self.ctx.clone(), self.hints.join(HINT_SEP))
         }
-        self.hints.join(" | ")
     }
 }
 
@@ -822,9 +848,9 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     let [table_area, _spark_placeholder] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(search_table_area);
 
-    let scroll = app.proc_scroll.min(count.saturating_sub(1));
+    let clamped_scroll = app.proc_scroll.min(count.saturating_sub(1));
     let max_visible = (table_area.height as usize).saturating_sub(3);
-    let start = scroll;
+    let start = clamped_scroll;
     let end = count.min(start + max_visible);
     let visible = &filtered[start..end];
     let rel_sel = app.proc_selection.saturating_sub(start);
@@ -924,8 +950,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         Tab::Mem => render_mem(frame, tab_area, app, samples),
     }
 
-    let status = Paragraph::new(StatusBar::build(app).display()).fg(Color::Gray);
-    frame.render_widget(&status, status_area);
+    let (ctx, hints) = StatusBar::build(app).display();
+    let [ctx_area, hints_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Min(20)]).areas(status_area);
+    frame.render_widget(
+        Paragraph::new(ctx)
+            .alignment(Alignment::Left)
+            .fg(Color::Gray),
+        ctx_area,
+    );
+    frame.render_widget(
+        Paragraph::new(hints)
+            .alignment(Alignment::Right)
+            .fg(Color::Gray),
+        hints_area,
+    );
 
     if let Some(fb) = app.kill_feedback.take() {
         render_kill_feedback(frame, tab_area, &fb);
@@ -1221,101 +1260,115 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_context_searchable_tabs() {
+    fn status_bar_search_hint_in_hints() {
         let mut app = App::new();
-        app.help_visible = false;
-
-        app.active_tab = Tab::Proc;
-        let text = StatusBar::build(&app).display();
-        assert!(text.contains("/ Search"), "Proc should have search hint");
-
-        app.active_tab = Tab::Net;
-        let text = StatusBar::build(&app).display();
-        assert!(text.contains("/ Search"), "Net should have search hint");
-
-        app.active_tab = Tab::Files;
-        let text = StatusBar::build(&app).display();
-        assert!(text.contains("/ Search"), "Files should have search hint");
-
+        for tab in [Tab::Proc, Tab::Net, Tab::Files] {
+            app.active_tab = tab;
+            let (_, hints) = StatusBar::build(&app).display();
+            assert!(
+                hints.contains("/ Search"),
+                "{:?} should show search hint",
+                tab
+            );
+        }
         app.active_tab = Tab::Dash;
-        let text = StatusBar::build(&app).display();
-        assert!(!text.contains("/ Search"), "Dash must not have search hint");
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(
+            !hints.contains("/ Search"),
+            "Dash should not show search hint"
+        );
     }
 
     #[test]
-    fn status_bar_context_kill_only_on_proc() {
+    fn status_bar_search_hidden_when_focused() {
         let mut app = App::new();
-        app.help_visible = false;
-
         app.active_tab = Tab::Proc;
-        let text = StatusBar::build(&app).display();
-        assert!(text.contains("Delete Kill"), "Proc should have kill hint");
-
-        app.active_tab = Tab::Dash;
-        let text = StatusBar::build(&app).display();
+        app.proc_search_focused = true;
+        let (_, hints) = StatusBar::build(&app).display();
         assert!(
-            !text.contains("Delete Kill"),
-            "Dash should not have kill hint"
+            !hints.contains("/ Search"),
+            "search hint hidden when focused"
         );
     }
 
     #[test]
-    fn status_bar_help_hint_present() {
-        let app = App::new();
-        let text = StatusBar::build(&app).display();
+    fn status_bar_kill_hints_only_with_pid_and_proc() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(hints.contains("Delete Kill"), "kill hint with PID on Proc");
         assert!(
-            text.contains("? Help"),
-            "status bar should include help hint"
+            hints.contains("Ctrl+K Kill!"),
+            "Ctrl+K hint with PID on Proc"
         );
-    }
 
-    #[test]
-    fn status_bar_quit_hint_present() {
-        let app = App::new();
-        let text = StatusBar::build(&app).display();
-        assert!(
-            text.contains("q/Ctrl+C Quit"),
-            "status bar should include quit hint"
-        );
+        app.selected_pid = None;
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(!hints.contains("Delete Kill"), "no kill hint without PID");
     }
 
     #[test]
     fn status_bar_sidebar_hints_match() {
         let mut app = App::new();
         app.sidebar_visible = true;
-        assert!(
-            StatusBar::build(&app).display().contains("Hide Sidebar"),
-            "should say 'Hide Sidebar' when visible"
-        );
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(hints.contains("Hide"), "should say 'Hide' when visible");
         app.sidebar_visible = false;
-        assert!(
-            StatusBar::build(&app).display().contains("Show Sidebar"),
-            "should say 'Show Sidebar' when hidden"
-        );
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(hints.contains("Show"), "should say 'Show' when hidden");
     }
 
     #[test]
-    fn status_bar_help_mode_text() {
+    fn status_bar_ctx_shows_tab_name() {
+        let app = App::new();
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Dash", "default ctx is tab label");
+    }
+
+    #[test]
+    fn status_bar_ctx_help_mode() {
         let mut app = App::new();
         app.help_visible = true;
-        assert_eq!(StatusBar::build(&app).display(), " ? Close help");
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Help (? to close)");
     }
 
     #[test]
-    fn status_bar_kill_confirm_text() {
+    fn status_bar_ctx_kill_confirm() {
         let mut app = App::new();
         app.kill_state = Some(KillState::Confirm);
-        assert_eq!(
-            StatusBar::build(&app).display(),
-            " Kill? y/Y Yes | any key Cancel"
-        );
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Kill? PID 42 (bash)");
     }
 
     #[test]
-    fn status_bar_kill_feedback_text() {
+    fn status_bar_ctx_kill_feedback() {
         let mut app = App::new();
-        app.kill_feedback = Some("Killed PID 1234".to_owned());
-        assert_eq!(StatusBar::build(&app).display(), "Killed PID 1234");
+        app.kill_feedback = Some("Killed PID 42".to_owned());
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Killed PID 42");
+    }
+
+    #[test]
+    fn status_bar_hints_max_three() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.selected_pid = Some(42);
+        let (_, hints) = StatusBar::build(&app).display();
+        let count = hints.matches(HINT_SEP).count() + 1;
+        assert!(count <= 4, "at most 4 hints, got {count}: {hints}");
+    }
+
+    #[test]
+    fn status_bar_no_quit_or_help_hints() {
+        let app = App::new();
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(!hints.contains("q/Ctrl+C"), "quit hint removed");
+        assert!(!hints.contains("? Help"), "help hint removed");
     }
 
     #[test]
