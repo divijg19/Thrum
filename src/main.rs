@@ -14,12 +14,15 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         if !std::thread::panicking() {
+            let _ = execute!(std::io::stdout(), DisableMouseCapture);
             ratatui::restore();
         }
     }
 }
 
 use crossterm::event::{self, Event};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
 
 mod app;
 mod samplers;
@@ -43,87 +46,115 @@ fn main() -> std::io::Result<()> {
         app::CliAction::Config(cfg) => cfg,
     };
     let mut terminal = ratatui::init();
+    execute!(std::io::stdout(), EnableMouseCapture)?;
     let _guard = TerminalGuard;
     let mut app = app::App::new();
     app.apply_config(&cfg);
     let mut samplers = samplers::Samplers::new();
     let refresh = Duration::from_millis(cfg.refresh_ms);
 
+    let mut last_samples = samplers.sample(app.active_tab == app::Tab::Proc);
+
     loop {
-        let refresh_proc = app.active_tab == app::Tab::Proc;
-        let samples = samplers.sample(refresh_proc);
+        if !app.paused {
+            let refresh_proc = app.active_tab == app::Tab::Proc;
+            last_samples = samplers.sample(refresh_proc);
 
-        app::push_bounded(&mut app.cpu_history, samples.cpu_usage as u64, app::WINDOW);
+            app::push_bounded(
+                &mut app.cpu_history,
+                last_samples.cpu_usage as u64,
+                app.history_window,
+            );
 
-        let mem_pct = if samples.mem_total > 0 {
-            (samples.mem_used as f64 / samples.mem_total as f64 * 100.0) as u64
-        } else {
-            0
-        };
-        app::push_bounded(&mut app.mem_history, mem_pct, app::WINDOW);
+            let mem_pct = if last_samples.mem_total > 0 {
+                (last_samples.mem_used as f64 / last_samples.mem_total as f64 * 100.0) as u64
+            } else {
+                0
+            };
+            app::push_bounded(&mut app.mem_history, mem_pct, app.history_window);
 
-        app::push_bounded(&mut app.net_rx_history, samples.net_rx_rate, app::WINDOW);
-        app::push_bounded(&mut app.net_tx_history, samples.net_tx_rate, app::WINDOW);
+            app::push_bounded(
+                &mut app.net_rx_history,
+                last_samples.net_rx_rate,
+                app.history_window,
+            );
+            app::push_bounded(
+                &mut app.net_tx_history,
+                last_samples.net_tx_rate,
+                app.history_window,
+            );
 
-        app::push_bounded(
-            &mut app.disk_read_history,
-            samples.disk_read_rate,
-            app::WINDOW,
-        );
-        app::push_bounded(
-            &mut app.disk_write_history,
-            samples.disk_write_rate,
-            app::WINDOW,
-        );
+            app::push_bounded(
+                &mut app.disk_read_history,
+                last_samples.disk_read_rate,
+                app.history_window,
+            );
+            app::push_bounded(
+                &mut app.disk_write_history,
+                last_samples.disk_write_rate,
+                app.history_window,
+            );
 
-        let valid_temps: Vec<f32> = samples
-            .temperatures
-            .iter()
-            .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
-            .collect();
-        let avg_temp = if valid_temps.is_empty() {
-            0.0
-        } else {
-            valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
-        };
-        app::push_bounded(&mut app.temp_history, (avg_temp * 10.0) as u64, app::WINDOW);
+            let valid_temps: Vec<f32> = last_samples
+                .temperatures
+                .iter()
+                .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
+                .collect();
+            let avg_temp = if valid_temps.is_empty() {
+                0.0
+            } else {
+                valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
+            };
+            app::push_bounded(
+                &mut app.temp_history,
+                (avg_temp * 10.0) as u64,
+                app.history_window,
+            );
 
-        let avg_usage = if samples.disks.is_empty() {
-            0.0
-        } else {
-            samples.disks.iter().map(|d| d.usage_pct).sum::<f32>() / samples.disks.len() as f32
-        };
-        app::push_bounded(
-            &mut app.disk_usage_history,
-            (avg_usage * 10.0) as u64,
-            app::WINDOW,
-        );
+            let avg_usage = if last_samples.disks.is_empty() {
+                0.0
+            } else {
+                last_samples.disks.iter().map(|d| d.usage_pct).sum::<f32>()
+                    / last_samples.disks.len() as f32
+            };
+            app::push_bounded(
+                &mut app.disk_usage_history,
+                (avg_usage * 10.0) as u64,
+                app.history_window,
+            );
 
-        let swap_pct = if samples.swap_total > 0 {
-            (samples.swap_used as f64 / samples.swap_total as f64 * 100.0) as u64
-        } else {
-            0
-        };
-        app::push_bounded(&mut app.swap_history, swap_pct, app::WINDOW);
+            let swap_pct = if last_samples.swap_total > 0 {
+                (last_samples.swap_used as f64 / last_samples.swap_total as f64 * 100.0) as u64
+            } else {
+                0
+            };
+            app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
+        }
 
-        terminal.draw(|f| tui::draw(f, &mut app, &samples))?;
+        terminal.draw(|f| tui::draw(f, &mut app, &last_samples))?;
 
-        if event::poll(refresh)?
-            && let Event::Key(key) = event::read()?
-        {
-            app.handle_key(key);
-            let kill_dispatch = app.kill_state.take();
-            if let Some(app::KillState::Dispatch(signal)) = kill_dispatch
-                && let Some(pid) = app.selected_pid
-            {
-                let ok = samplers.kill_process(pid, signal);
-                app.kill_feedback = Some(if ok {
-                    format!("Killed PID {pid}")
-                } else {
-                    format!("Failed to kill PID {pid}")
-                });
-            } else if matches!(kill_dispatch, Some(app::KillState::Dispatch(_))) {
-                app.kill_feedback = Some("No process selected".to_owned());
+        if event::poll(refresh)? {
+            match event::read()? {
+                Event::Key(key) => {
+                    app.handle_key(key);
+                    let kill_dispatch = app.kill_state.take();
+                    if let Some(app::KillState::Dispatch(signal)) = kill_dispatch
+                        && let Some(pid) = app.selected_pid
+                    {
+                        let ok = samplers.kill_process(pid, signal);
+                        app.kill_feedback = Some(if ok {
+                            format!("Killed PID {pid}")
+                        } else {
+                            format!("Failed to kill PID {pid}")
+                        });
+                    } else if matches!(kill_dispatch, Some(app::KillState::Dispatch(_))) {
+                        app.kill_feedback = Some("No process selected".to_owned());
+                    }
+                }
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse.column, mouse.row, mouse.kind);
+                }
+                _ => {}
             }
             if app.should_quit {
                 break;
