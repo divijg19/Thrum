@@ -469,14 +469,16 @@ pub fn parse_args(args: &[String]) -> Config {
                 let val = args.get(i).unwrap_or_else(|| {
                     fatal!("--tabs requires a value");
                 });
-                cfg.tab_orientation = match val.to_lowercase().as_str() {
+                cfg.tab_orientation = match val.to_ascii_lowercase().as_str() {
                     "sidebar" => TabOrientation::Sidebar,
                     "horizontal" => TabOrientation::Horizontal,
                     _ => fatal!("--tabs must be 'sidebar' or 'horizontal'"),
                 };
             }
             "--config" | "-c" => {
-                // value already consumed by pre-loop above
+                if i + 1 >= args.len() {
+                    fatal!("--config requires a value");
+                }
                 i += 1;
             }
             _ => {
