@@ -40,6 +40,7 @@ pub enum TabOrientation {
     #[default]
     Sidebar,
     Horizontal,
+    HorizontalFooter,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -272,13 +273,14 @@ impl App {
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.tab_orientation = match self.tab_orientation {
                     TabOrientation::Sidebar => TabOrientation::Horizontal,
-                    TabOrientation::Horizontal => TabOrientation::Sidebar,
+                    TabOrientation::Horizontal => TabOrientation::HorizontalFooter,
+                    TabOrientation::HorizontalFooter => TabOrientation::Sidebar,
                 };
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 match self.tab_orientation {
                     TabOrientation::Sidebar => self.sidebar_visible = !self.sidebar_visible,
-                    TabOrientation::Horizontal => {
+                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
                         self.tab_bar_visible = !self.tab_bar_visible;
                     }
                 }
@@ -294,6 +296,24 @@ impl App {
             }
             KeyCode::PageDown if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
+            }
+            KeyCode::Right
+                if matches!(
+                    self.tab_orientation,
+                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter
+                ) =>
+            {
+                let idx = self.active_tab.index();
+                self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
+            }
+            KeyCode::Left
+                if matches!(
+                    self.tab_orientation,
+                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter
+                ) =>
+            {
+                let idx = self.active_tab.index();
+                self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
             }
             KeyCode::Delete if self.active_tab == Tab::Proc && self.selected_pid.is_some() => {
                 self.kill_state = Some(KillState::Confirm);
@@ -385,7 +405,7 @@ pub fn parse_args(args: &[String]) -> Config {
     }
 
     let config_path = (0..args.len())
-        .rfind(|&i| args[i] == "--config" || args[i] == "-c")
+        .position(|i| args[i] == "--config" || args[i] == "-c")
         .and_then(|i| args.get(i + 1))
         .cloned();
 
@@ -456,9 +476,7 @@ pub fn parse_args(args: &[String]) -> Config {
                 };
             }
             "--config" | "-c" => {
-                args.get(i + 1).unwrap_or_else(|| {
-                    fatal!("--config requires a value");
-                });
+                // value already consumed by pre-loop above
                 i += 1;
             }
             _ => {
@@ -1296,7 +1314,20 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
         assert_eq!(app.tab_orientation, TabOrientation::Horizontal);
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(app.tab_orientation, TabOrientation::HorizontalFooter);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
         assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+    }
+
+    #[test]
+    fn ctrl_s_in_horizontal_footer_toggles_tab_bar() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::HorizontalFooter;
+        assert!(app.tab_bar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.tab_bar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.tab_bar_visible);
     }
 
     #[test]
@@ -1337,5 +1368,40 @@ mod tests {
         let toml_str = "tab_orientation = \"sidebar\"\n";
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
+        let toml_str = "tab_orientation = \"horizontal_footer\"\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.tab_orientation, TabOrientation::HorizontalFooter);
+    }
+
+    #[test]
+    fn left_right_arrows_navigate_tabs_in_horizontal() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::Horizontal;
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn left_right_arrows_navigate_tabs_in_footer() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::HorizontalFooter;
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Proc);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn left_right_arrows_noop_in_sidebar() {
+        let mut app = App::new();
+        assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Dash);
     }
 }
