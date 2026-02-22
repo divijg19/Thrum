@@ -36,6 +36,14 @@ pub enum KillState {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TabOrientation {
+    #[default]
+    Sidebar,
+    Horizontal,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Tab {
     #[default]
     Dash,
@@ -95,6 +103,8 @@ impl Tab {
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
+    pub tab_orientation: TabOrientation,
+    pub tab_bar_visible: bool,
     pub cpu_history: VecDeque<u64>,
     pub mem_history: VecDeque<u64>,
     pub net_rx_history: VecDeque<u64>,
@@ -127,6 +137,8 @@ impl App {
         Self {
             active_tab: Tab::Dash,
             sidebar_visible: true,
+            tab_orientation: TabOrientation::Sidebar,
+            tab_bar_visible: true,
             cpu_history: VecDeque::with_capacity(WINDOW),
             mem_history: VecDeque::with_capacity(WINDOW),
             net_rx_history: VecDeque::with_capacity(WINDOW),
@@ -158,6 +170,7 @@ impl App {
     pub const fn apply_config(&mut self, cfg: &Config) {
         self.active_tab = cfg.default_tab;
         self.sidebar_visible = !cfg.hide_sidebar;
+        self.tab_orientation = cfg.tab_orientation;
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -256,8 +269,19 @@ impl App {
                 Tab::Files => self.files_search_focused = true,
                 _ => {}
             },
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.tab_orientation = match self.tab_orientation {
+                    TabOrientation::Sidebar => TabOrientation::Horizontal,
+                    TabOrientation::Horizontal => TabOrientation::Sidebar,
+                };
+            }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.sidebar_visible = !self.sidebar_visible;
+                match self.tab_orientation {
+                    TabOrientation::Sidebar => self.sidebar_visible = !self.sidebar_visible,
+                    TabOrientation::Horizontal => {
+                        self.tab_bar_visible = !self.tab_bar_visible;
+                    }
+                }
             }
             KeyCode::Up if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_sub(1);
@@ -285,12 +309,24 @@ impl App {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
     pub refresh_ms: u64,
     pub default_tab: Tab,
     pub hide_sidebar: bool,
+    pub tab_orientation: TabOrientation,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            refresh_ms: 1000,
+            default_tab: Tab::Dash,
+            hide_sidebar: false,
+            tab_orientation: TabOrientation::Sidebar,
+        }
+    }
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -324,6 +360,7 @@ fn read_config_file(path: &Path) -> Option<Config> {
         .ok()
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn parse_args(args: &[String]) -> Config {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("Usage: thrum [OPTIONS]");
@@ -336,6 +373,7 @@ pub fn parse_args(args: &[String]) -> Config {
             "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)"
         );
         eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
+        eprintln!("  --tabs <mode>         Tab orientation: sidebar (default) or horizontal");
         eprintln!("  -V, --version         Show version");
         eprintln!("  --help                Show this help");
         std::process::exit(0);
@@ -405,6 +443,17 @@ pub fn parse_args(args: &[String]) -> Config {
             }
             "-s" | "--no-sidebar" => {
                 cfg.hide_sidebar = true;
+            }
+            "--tabs" => {
+                i += 1;
+                let val = args.get(i).unwrap_or_else(|| {
+                    fatal!("--tabs requires a value");
+                });
+                cfg.tab_orientation = match val.to_lowercase().as_str() {
+                    "sidebar" => TabOrientation::Sidebar,
+                    "horizontal" => TabOrientation::Horizontal,
+                    _ => fatal!("--tabs must be 'sidebar' or 'horizontal'"),
+                };
             }
             "--config" | "-c" => {
                 args.get(i + 1).unwrap_or_else(|| {
@@ -966,6 +1015,7 @@ mod tests {
             refresh_ms: 500,
             default_tab: Tab::Proc,
             hide_sidebar: false,
+            tab_orientation: TabOrientation::Sidebar,
         };
         app.apply_config(&cfg);
         assert_eq!(app.active_tab, Tab::Proc);
@@ -980,6 +1030,7 @@ mod tests {
             refresh_ms: 1000,
             default_tab: Tab::Dash,
             hide_sidebar: true,
+            tab_orientation: TabOrientation::Sidebar,
         };
         app.apply_config(&cfg);
         assert!(!app.sidebar_visible);
@@ -1007,9 +1058,10 @@ mod tests {
     fn config_deserialize_empty() {
         let toml_str = "";
         let cfg: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.refresh_ms, 0);
+        assert_eq!(cfg.refresh_ms, 1000);
         assert_eq!(cfg.default_tab, Tab::Dash);
         assert!(!cfg.hide_sidebar);
+        assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
     }
 
     #[test]
@@ -1035,7 +1087,8 @@ mod tests {
     fn config_deserialize_unknown_field_ignored() {
         let toml_str = "nonexistent = true\n";
         let cfg: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.refresh_ms, 0);
+        assert_eq!(cfg.refresh_ms, 1000);
+        assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
     }
 
     #[test]
@@ -1227,5 +1280,62 @@ mod tests {
         push_bounded(&mut d, "c", 2);
         let v: Vec<&&str> = d.iter().collect();
         assert_eq!(v, vec![&"b", &"c"]);
+    }
+
+    #[test]
+    fn tab_orientation_default_sidebar() {
+        assert_eq!(TabOrientation::default(), TabOrientation::Sidebar);
+        let app = App::new();
+        assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+    }
+
+    #[test]
+    fn ctrl_t_toggles_tab_orientation() {
+        let mut app = App::new();
+        assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(app.tab_orientation, TabOrientation::Horizontal);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+    }
+
+    #[test]
+    fn ctrl_s_in_horizontal_toggles_tab_bar() {
+        let mut app = App::new();
+        assert!(app.tab_bar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(app.tab_orientation, TabOrientation::Horizontal);
+        assert!(app.sidebar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.tab_bar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.tab_bar_visible);
+    }
+
+    #[test]
+    fn ctrl_s_in_sidebar_toggles_sidebar() {
+        let mut app = App::new();
+        assert_eq!(app.tab_orientation, TabOrientation::Sidebar);
+        assert!(app.sidebar_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.sidebar_visible);
+    }
+
+    #[test]
+    fn parse_args_tabs_flag() {
+        let cfg = parse_args(&["--tabs".into(), "horizontal".into()]);
+        assert_eq!(cfg.tab_orientation, TabOrientation::Horizontal);
+        let cfg = parse_args(&["--tabs".into(), "sidebar".into()]);
+        assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
+    }
+
+    #[test]
+    fn config_tab_orientation_deserialize() {
+        let toml_str = "tab_orientation = \"horizontal\"\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.tab_orientation, TabOrientation::Horizontal);
+        let toml_str = "tab_orientation = \"sidebar\"\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
     }
 }
