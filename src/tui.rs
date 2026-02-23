@@ -269,13 +269,20 @@ fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) 
 
     if let Some(sa) = search_area {
         let cursor = if focused { "\u{258c}" } else { "" };
-        let content = if query.is_empty() {
-            cursor.to_string()
+        let content: Vec<Span<'_>> = if query.is_empty() {
+            if focused {
+                vec![Span::styled(
+                    format!("{cursor} Type to filter\u{2026}"),
+                    Style::new().fg(Color::DarkGray),
+                )]
+            } else {
+                vec![]
+            }
         } else {
-            format!("{query}{cursor}")
+            vec![Span::raw(format!("{query}{cursor}"))]
         };
         frame.render_widget(
-            Paragraph::new(content).block(Block::bordered().title(" Search ")),
+            Paragraph::new(Line::from(content)).block(Block::bordered().title(" Search ")),
             sa,
         );
     }
@@ -747,6 +754,12 @@ impl StatusBar {
                 hints: vec![],
             };
         }
+        if app.paused {
+            return Self {
+                ctx: "PAUSED (Space to resume)".to_owned(),
+                hints: vec![],
+            };
+        }
         if app.help_visible {
             return Self {
                 ctx: "Help (? to close)".to_owned(),
@@ -787,20 +800,35 @@ impl StatusBar {
         }
 
         if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+            let active_query = match app.active_tab {
+                Tab::Proc => &app.proc_query,
+                Tab::Net => &app.net_query,
+                Tab::Files => &app.files_query,
+                _ => "",
+            };
             let focused = match app.active_tab {
                 Tab::Proc => app.proc_search_focused,
                 Tab::Net => app.net_search_focused,
                 Tab::Files => app.files_search_focused,
                 _ => false,
             };
-            if !focused {
+            if !focused && active_query.is_empty() {
                 hints.push("/ Search".to_owned());
+            } else if !active_query.is_empty() {
+                hints.push("Esc Clear".to_owned());
             }
         }
 
         if app.active_tab == Tab::Proc && app.selected_pid.is_some() {
             hints.push("Delete Kill".to_owned());
             hints.push("Ctrl+K Kill!".to_owned());
+        }
+
+        if hints.len() < 4 {
+            match app.active_tab {
+                Tab::Proc => hints.push("\u{2191}\u{2193} Select".to_owned()),
+                _ => hints.push("1-9 Tab".to_owned()),
+            }
         }
 
         if hints.len() > 4 {
@@ -1458,5 +1486,99 @@ mod tests {
     #[test]
     fn format_timestamp_leap_year_march() {
         assert_eq!(format_timestamp(68_256_000), "1972-03-01 00:00:00");
+    }
+
+    // --- Status bar paused ---
+
+    #[test]
+    fn status_bar_ctx_paused() {
+        let mut app = App::new();
+        app.paused = true;
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "PAUSED (Space to resume)");
+    }
+
+    // --- Status bar tab-specific hints ---
+
+    #[test]
+    fn status_bar_proc_shows_select_hint() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(hints.contains("↑↓ Select"), "Proc tab shows select hint");
+    }
+
+    #[test]
+    fn status_bar_non_proc_shows_tab_hint() {
+        for tab in [
+            Tab::Dash,
+            Tab::Net,
+            Tab::Files,
+            Tab::Time,
+            Tab::Temp,
+            Tab::Cores,
+            Tab::Disk,
+            Tab::Mem,
+        ] {
+            let mut app = App::new();
+            app.active_tab = tab;
+            let (_, hints) = StatusBar::build(&app).display();
+            assert!(hints.contains("1-9 Tab"), "{tab:?} shows 1-9 Tab hint");
+        }
+    }
+
+    // --- Status bar Esc Clear hint ---
+
+    #[test]
+    fn status_bar_esc_clear_when_filter_active() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.proc_query = "fire".to_owned();
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(
+            hints.contains("Esc Clear"),
+            "shows Esc Clear when filter active"
+        );
+        assert!(
+            !hints.contains("/ Search"),
+            "no search hint when filter active"
+        );
+    }
+
+    #[test]
+    fn status_bar_search_hint_when_no_filter() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(
+            hints.contains("/ Search"),
+            "shows / Search when no filter active"
+        );
+    }
+
+    #[test]
+    fn status_bar_esc_clear_on_net_tab() {
+        let mut app = App::new();
+        app.active_tab = Tab::Net;
+        app.net_query = "eth".to_owned();
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(hints.contains("Esc Clear"), "Esc Clear on Net with filter");
+    }
+
+    #[test]
+    fn status_bar_hints_keep_kill_with_tab_hint() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        let (_, hints) = StatusBar::build(&app).display();
+        assert!(
+            hints.contains("Delete Kill"),
+            "kill hint preserved when PID selected"
+        );
+        assert!(
+            hints.contains("Ctrl+K"),
+            "Ctrl+K hint preserved when PID selected"
+        );
     }
 }

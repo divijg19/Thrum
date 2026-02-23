@@ -1,11 +1,11 @@
 [package]
 name = "thrum"
-version = "0.3.12"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.96"
 description = "A terminal system monitor with dashboards for processes, network, disk, CPU, memory, and more"
 license = "MIT"
-authors = ["Divij Gupta"]
+authors = ["Divij Ganjoo"]
 repository = "https://github.com/divijg19/Thrum"
 keywords = ["system-monitor", "terminal", "tui", "dashboard"]
 categories = ["command-line-utilities", "monitoring"]
