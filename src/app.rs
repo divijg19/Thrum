@@ -949,6 +949,7 @@ mod tests {
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Continue)));
     }
 
+    // Restored in v0.4.2 — dropped during PR #132 merge to main (58c0702)
     #[test]
     fn ctrl_k_exits_search_and_kills_in_one_press() {
         let mut app = App::new();
@@ -958,6 +959,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert!(!app.proc_search_focused, "Ctrl+K should exit search");
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
+        assert_eq!(app.selected_pid, Some(42));
     }
 
     #[test]
