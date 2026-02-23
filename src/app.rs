@@ -7,15 +7,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
 use sysinfo::Signal;
 
-macro_rules! fatal {
-    ($($arg:tt)*) => {{
-        eprintln!("error: {}", format_args!($($arg)*));
-        std::process::exit(1);
-    }};
-}
-
 pub const PAGE_SIZE: usize = 10;
 pub const WINDOW: usize = 60;
+
+pub enum CliAction {
+    Help,
+    Version,
+    Error(String),
+    Config(Config),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcSortField {
@@ -380,110 +380,115 @@ fn read_config_file(path: &Path) -> Option<Config> {
         .ok()
 }
 
-#[expect(clippy::too_many_lines)]
-pub fn parse_args(args: &[String]) -> Config {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        eprintln!("Usage: thrum [OPTIONS]");
-        eprintln!();
-        eprintln!(
-            "  -c, --config <path>   Config file path (default: ~/.config/thrum/config.toml)"
-        );
-        eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
-        eprintln!(
-            "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)"
-        );
-        eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
-        eprintln!("  --tabs <mode>         Tab orientation: sidebar (default) or horizontal");
-        eprintln!("  -V, --version         Show version");
-        eprintln!("  --help                Show this help");
-        std::process::exit(0);
-    }
+pub fn print_help() {
+    eprintln!("Usage: thrum [OPTIONS]");
+    eprintln!();
+    eprintln!("  -c, --config <path>   Config file path (default: ~/.config/thrum/config.toml)");
+    eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
+    eprintln!("  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)");
+    eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
+    eprintln!("  --tabs <mode>         Tab orientation: sidebar, horizontal, or horizontal_footer");
+    eprintln!("  -V, --version         Show version");
+    eprintln!("  --help                Show this help");
+}
 
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("thrum {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
+pub fn parse_args(args: &[String]) -> CliAction {
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => return CliAction::Help,
+            "--version" | "-V" => return CliAction::Version,
+            _ => {}
+        }
     }
 
     let config_path = (0..args.len())
-        .position(|i| args[i] == "--config" || args[i] == "-c")
-        .and_then(|i| args.get(i + 1))
-        .cloned();
+        .position(|i| matches!(args[i].as_str(), "--config" | "-c"))
+        .and_then(|i| {
+            if i + 1 < args.len() {
+                Some(args[i + 1].as_str())
+            } else {
+                None
+            }
+        });
 
-    let mut cfg = config_path.as_ref().map_or_else(
-        || {
-            default_config_path()
-                .and_then(|p| read_config_file(&p))
-                .unwrap_or_default()
-        },
-        |path| {
+    let mut cfg = match config_path {
+        Some(path) => {
             let p = Path::new(path);
             if !p.exists() {
-                fatal!("config file '{path}' not found");
+                return CliAction::Error(format!("config file '{path}' not found"));
             }
-            read_config_file(p).unwrap_or_else(|| {
-                fatal!("config file '{path}' has invalid TOML");
-            })
-        },
-    );
+            match read_config_file(p) {
+                Some(c) => c,
+                None => return CliAction::Error(format!("config file '{path}' has invalid TOML")),
+            }
+        }
+        None => default_config_path()
+            .and_then(|p| read_config_file(&p))
+            .unwrap_or_default(),
+    };
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-r" | "--refresh" => {
                 i += 1;
-                let val = args.get(i).unwrap_or_else(|| {
-                    fatal!("--refresh requires a value");
-                });
-                cfg.refresh_ms = val.parse().unwrap_or_else(|_| {
-                    fatal!("--refresh must be a positive integer");
-                });
-                if cfg.refresh_ms == 0 {
-                    fatal!("--refresh must be > 0");
-                }
+                cfg.refresh_ms = match args.get(i) {
+                    Some(val) => match val.parse() {
+                        Ok(n) if n > 0 => n,
+                        _ => {
+                            return CliAction::Error(
+                                "--refresh must be a positive integer".to_owned(),
+                            );
+                        }
+                    },
+                    None => return CliAction::Error("--refresh requires a value".to_owned()),
+                };
             }
             "-t" | "--tab" => {
                 i += 1;
-                let name = args.get(i).unwrap_or_else(|| {
-                    fatal!("--tab requires a value");
-                });
-                cfg.default_tab = match name.to_lowercase().as_str() {
-                    "dash" => Tab::Dash,
-                    "proc" => Tab::Proc,
-                    "net" => Tab::Net,
-                    "files" => Tab::Files,
-                    "time" => Tab::Time,
-                    "temp" => Tab::Temp,
-                    "cores" => Tab::Cores,
-                    "disk" => Tab::Disk,
-                    "mem" => Tab::Mem,
-                    _ => {
-                        fatal!("unknown tab '{name}'");
+                match args.get(i) {
+                    Some(name) => {
+                        cfg.default_tab = match name.to_lowercase().as_str() {
+                            "dash" => Tab::Dash,
+                            "proc" => Tab::Proc,
+                            "net" => Tab::Net,
+                            "files" => Tab::Files,
+                            "time" => Tab::Time,
+                            "temp" => Tab::Temp,
+                            "cores" => Tab::Cores,
+                            "disk" => Tab::Disk,
+                            "mem" => Tab::Mem,
+                            _ => return CliAction::Error(format!("unknown tab '{name}'")),
+                        };
                     }
-                };
+                    None => return CliAction::Error("--tab requires a value".to_owned()),
+                }
             }
-            "-s" | "--no-sidebar" => {
-                cfg.hide_sidebar = true;
-            }
+            "-s" | "--no-sidebar" => cfg.hide_sidebar = true,
             "--tabs" => {
                 i += 1;
-                let val = args.get(i).unwrap_or_else(|| {
-                    fatal!("--tabs requires a value");
-                });
-                cfg.tab_orientation = match val.to_ascii_lowercase().as_str() {
-                    "sidebar" => TabOrientation::Sidebar,
-                    "horizontal" => TabOrientation::Horizontal,
-                    _ => fatal!("--tabs must be 'sidebar' or 'horizontal'"),
-                };
+                match args.get(i) {
+                    Some(val) => {
+                        cfg.tab_orientation = match val.to_ascii_lowercase().as_str() {
+                            "sidebar" => TabOrientation::Sidebar,
+                            "horizontal" => TabOrientation::Horizontal,
+                            "horizontal_footer" => TabOrientation::HorizontalFooter,
+                            _ => return CliAction::Error(
+                                "--tabs must be 'sidebar', 'horizontal', or 'horizontal_footer'"
+                                    .to_owned(),
+                            ),
+                        };
+                    }
+                    None => return CliAction::Error("--tabs requires a value".to_owned()),
+                }
             }
-            "--config" | "-c" => {
+            "-c" | "--config" => {
                 if i + 1 >= args.len() {
-                    fatal!("--config requires a value");
+                    return CliAction::Error("--config requires a value".to_owned());
                 }
                 i += 1;
             }
-            _ => {
-                fatal!("unknown flag '{}'", args[i]);
-            }
+            _ => return CliAction::Error(format!("unknown flag '{}'", args[i])),
         }
         i += 1;
     }
@@ -491,7 +496,7 @@ pub fn parse_args(args: &[String]) -> Config {
     if cfg.refresh_ms == 0 {
         cfg.refresh_ms = 1000;
     }
-    cfg
+    CliAction::Config(cfg)
 }
 
 pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
@@ -523,7 +528,7 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
         }
         _ => {
             *focused = false;
-            false
+            true
         }
     }
 }
@@ -816,14 +821,18 @@ mod tests {
     }
 
     #[test]
-    fn delete_exits_search_and_kills() {
+    fn delete_exits_search_then_kill_on_second_press() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert!(app.proc_search_focused);
+        // First Delete: exits search but does not trigger kill (key consumed)
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
+        assert!(app.kill_state.is_none(), "key consumed by search exit");
+        // Second Delete: now triggers kill confirm
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
     }
 
@@ -907,14 +916,17 @@ mod tests {
     }
 
     #[test]
-    fn search_tab_switches_tab() {
+    fn search_tab_exits_then_tab_cycles_on_second_press() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert!(app.proc_search_focused);
-
+        // First Tab: exits search (key consumed), does not cycle tab
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
+        assert_eq!(app.active_tab, Tab::Proc, "Tab key consumed by search exit");
+        // Second Tab: now cycles to next tab
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Net);
     }
 
@@ -1145,15 +1157,17 @@ mod tests {
         }
     }
 
+    fn parse_config(args: &[&str]) -> Config {
+        let input: Vec<String> = args.iter().map(ToString::to_string).collect();
+        match parse_args(&input) {
+            CliAction::Config(cfg) => cfg,
+            _ => panic!("expected Config, got {input:?}"),
+        }
+    }
+
     #[test]
     fn parse_args_short_flags() {
-        let cfg = parse_args(&[
-            "-r".into(),
-            "500".into(),
-            "-t".into(),
-            "net".into(),
-            "-s".into(),
-        ]);
+        let cfg = parse_config(&["-r", "500", "-t", "net", "-s"]);
         assert_eq!(cfg.refresh_ms, 500);
         assert_eq!(cfg.default_tab, Tab::Net);
         assert!(cfg.hide_sidebar);
@@ -1161,13 +1175,7 @@ mod tests {
 
     #[test]
     fn parse_args_long_flags() {
-        let cfg = parse_args(&[
-            "--refresh".into(),
-            "300".into(),
-            "--tab".into(),
-            "files".into(),
-            "--no-sidebar".into(),
-        ]);
+        let cfg = parse_config(&["--refresh", "300", "--tab", "files", "--no-sidebar"]);
         assert_eq!(cfg.refresh_ms, 300);
         assert_eq!(cfg.default_tab, Tab::Files);
         assert!(cfg.hide_sidebar);
@@ -1175,7 +1183,7 @@ mod tests {
 
     #[test]
     fn parse_args_partial() {
-        let cfg = parse_args(&["-r".into(), "200".into()]);
+        let cfg = parse_config(&["-r", "200"]);
         assert_eq!(cfg.refresh_ms, 200);
         assert_eq!(cfg.default_tab, Tab::Dash);
         assert!(!cfg.hide_sidebar);
@@ -1194,50 +1202,32 @@ mod tests {
             ("disk", Tab::Disk),
             ("mem", Tab::Mem),
         ] {
-            let cfg = parse_args(&["-t".into(), name.into()]);
+            let cfg = parse_config(&["-t", name]);
             assert_eq!(cfg.default_tab, tab, "tab '{name}'");
         }
     }
 
     #[test]
     fn parse_args_order() {
-        let cfg1 = parse_args(&[
-            "-r".into(),
-            "500".into(),
-            "-t".into(),
-            "mem".into(),
-            "-s".into(),
-        ]);
+        let cfg1 = parse_config(&["-r", "500", "-t", "mem", "-s"]);
         assert_eq!(cfg1.refresh_ms, 500);
         assert_eq!(cfg1.default_tab, Tab::Mem);
         assert!(cfg1.hide_sidebar);
-        let cfg2 = parse_args(&[
-            "-s".into(),
-            "-r".into(),
-            "500".into(),
-            "-t".into(),
-            "mem".into(),
-        ]);
+        let cfg2 = parse_config(&["-s", "-r", "500", "-t", "mem"]);
         assert_eq!(cfg2, cfg1);
-        let cfg3 = parse_args(&[
-            "-t".into(),
-            "mem".into(),
-            "-s".into(),
-            "-r".into(),
-            "500".into(),
-        ]);
+        let cfg3 = parse_config(&["-t", "mem", "-s", "-r", "500"]);
         assert_eq!(cfg3, cfg1);
     }
 
     #[test]
     fn parse_args_long_refresh() {
-        let cfg = parse_args(&["--refresh".into(), "500".into()]);
+        let cfg = parse_config(&["--refresh", "500"]);
         assert_eq!(cfg.refresh_ms, 500);
     }
 
     #[test]
     fn parse_args_long_tab() {
-        let cfg = parse_args(&["--tab".into(), "disk".into()]);
+        let cfg = parse_config(&["--tab", "disk"]);
         assert_eq!(cfg.default_tab, Tab::Disk);
     }
 
@@ -1260,13 +1250,11 @@ mod tests {
             app.handle_key(KeyEvent::new(*key, KeyModifiers::NONE));
             assert_eq!(
                 app.proc_sort_field, *expected_field,
-                "key '{:?}' should set sort field to {expected_field:?}",
-                key
+                "key '{key:?}' should set sort field to {expected_field:?}",
             );
             assert_eq!(
                 app.proc_sort_asc, *expected_asc,
-                "key '{:?}' should set sort_asc to {expected_asc}",
-                key
+                "key '{key:?}' should set sort_asc to {expected_asc}",
             );
         }
     }
@@ -1356,10 +1344,50 @@ mod tests {
 
     #[test]
     fn parse_args_tabs_flag() {
-        let cfg = parse_args(&["--tabs".into(), "horizontal".into()]);
+        let cfg = parse_config(&["--tabs", "horizontal"]);
         assert_eq!(cfg.tab_orientation, TabOrientation::Horizontal);
-        let cfg = parse_args(&["--tabs".into(), "sidebar".into()]);
+        let cfg = parse_config(&["--tabs", "sidebar"]);
         assert_eq!(cfg.tab_orientation, TabOrientation::Sidebar);
+    }
+
+    #[test]
+    fn parse_args_tabs_horizontal_footer() {
+        let cfg = parse_config(&["--tabs", "horizontal_footer"]);
+        assert_eq!(cfg.tab_orientation, TabOrientation::HorizontalFooter);
+    }
+
+    #[test]
+    fn parse_args_help_returns_help_action() {
+        let result = parse_args(&["--help".into()]);
+        assert!(matches!(result, CliAction::Help));
+        let result = parse_args(&["-h".into()]);
+        assert!(matches!(result, CliAction::Help));
+    }
+
+    #[test]
+    fn parse_args_version_returns_version_action() {
+        let result = parse_args(&["--version".into()]);
+        assert!(matches!(result, CliAction::Version));
+        let result = parse_args(&["-V".into()]);
+        assert!(matches!(result, CliAction::Version));
+    }
+
+    #[test]
+    fn parse_args_config_missing_value() {
+        let result = parse_args(&["--config".into()]);
+        assert!(matches!(result, CliAction::Error(_)));
+    }
+
+    #[test]
+    fn parse_args_tabs_missing_value() {
+        let result = parse_args(&["--tabs".into()]);
+        assert!(matches!(result, CliAction::Error(_)));
+    }
+
+    #[test]
+    fn parse_args_unknown_flag() {
+        let result = parse_args(&["--bogus".into()]);
+        assert!(matches!(result, CliAction::Error(_)));
     }
 
     #[test]

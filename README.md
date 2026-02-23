@@ -28,6 +28,7 @@ Create `~/.config/thrum/config.toml` (or use `$XDG_CONFIG_HOME`):
 refresh_ms = 1000
 default_tab = "proc"
 hide_sidebar = true
+tab_orientation = "sidebar"    # sidebar, horizontal, horizontal_footer
 ```
 
 CLI flags override config file values.

@@ -25,7 +25,22 @@ mod samplers;
 mod tui;
 
 fn main() -> std::io::Result<()> {
-    let cfg = app::parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cfg = match app::parse_args(&args) {
+        app::CliAction::Help => {
+            app::print_help();
+            return Ok(());
+        }
+        app::CliAction::Version => {
+            println!("thrum {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        app::CliAction::Error(msg) => {
+            eprintln!("error: {msg}");
+            std::process::exit(1);
+        }
+        app::CliAction::Config(cfg) => cfg,
+    };
     let mut terminal = ratatui::init();
     let _guard = TerminalGuard;
     let mut app = app::App::new();
