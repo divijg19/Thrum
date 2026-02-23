@@ -29,6 +29,20 @@ pub enum ProcSortField {
     Status,
 }
 
+impl std::fmt::Display for ProcSortField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Name => write!(f, "Name"),
+            Self::Pid => write!(f, "PID"),
+            Self::Cpu => write!(f, "CPU"),
+            Self::Memory => write!(f, "Memory"),
+            Self::VirtualMemory => write!(f, "Virt Mem"),
+            Self::RunTime => write!(f, "Run Time"),
+            Self::Status => write!(f, "Status"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KillState {
     Confirm,
@@ -185,7 +199,7 @@ impl App {
         self.tab_orientation = cfg.tab_orientation;
         self.proc_sort_field = cfg.proc_sort_default;
         self.proc_sort_asc = cfg.proc_sort_asc_default;
-        self.history_window = cfg.history_window;
+        self.history_window = cfg.history_window.max(1);
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -347,7 +361,8 @@ impl App {
             }
             KeyCode::Char('k')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.active_tab == Tab::Proc =>
+                    && self.active_tab == Tab::Proc
+                    && self.selected_pid.is_some() =>
             {
                 self.kill_state = Some(KillState::Dispatch(Signal::Kill));
             }
@@ -382,7 +397,7 @@ impl App {
         }
 
         if self.tab_orientation == TabOrientation::Horizontal && self.tab_bar_visible && row == 1 {
-            let tab_width = self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16);
+            let tab_width = (self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16)).max(1);
             let idx = col.saturating_sub(1) / tab_width;
             if (idx as usize) < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx as usize];
@@ -394,7 +409,7 @@ impl App {
             && self.tab_bar_visible
             && row == self.term_height.saturating_sub(3)
         {
-            let tab_width = self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16);
+            let tab_width = (self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16)).max(1);
             let idx = col.saturating_sub(1) / tab_width;
             if (idx as usize) < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx as usize];

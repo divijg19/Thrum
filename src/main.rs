@@ -50,6 +50,10 @@ fn main() -> std::io::Result<()> {
     let _guard = TerminalGuard;
     let mut app = app::App::new();
     app.apply_config(&cfg);
+    if let Ok((w, h)) = crossterm::terminal::size() {
+        app.term_width = w;
+        app.term_height = h;
+    }
     let mut samplers = samplers::Samplers::new();
     let refresh = Duration::from_millis(cfg.refresh_ms);
 
@@ -176,6 +180,10 @@ fn main() -> std::io::Result<()> {
                 }
                 Event::Mouse(mouse) => {
                     app.handle_mouse(mouse.column, mouse.row, mouse.kind);
+                }
+                Event::Resize(w, h) => {
+                    app.term_width = w;
+                    app.term_height = h;
                 }
                 _ => {}
             }
