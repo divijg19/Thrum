@@ -4,7 +4,8 @@
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units
     clippy::cast_sign_loss,            // unsigned counters always non-negative
-    clippy::similar_names              // intentional: mem_used/mem_total etc.
+    clippy::similar_names,             // intentional: mem_used/mem_total etc.
+    clippy::uninlined_format_args      // intentional: positional args are more readable
 )]
 
 use std::time::Duration;
@@ -25,7 +26,22 @@ mod samplers;
 mod tui;
 
 fn main() -> std::io::Result<()> {
-    let cfg = app::parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cfg = match app::parse_args(&args) {
+        app::CliAction::Help => {
+            app::print_help();
+            return Ok(());
+        }
+        app::CliAction::Version => {
+            println!("thrum {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        app::CliAction::Error(msg) => {
+            eprintln!("error: {msg}");
+            std::process::exit(1);
+        }
+        app::CliAction::Config(cfg) => cfg,
+    };
     let mut terminal = ratatui::init();
     let _guard = TerminalGuard;
     let mut app = app::App::new();

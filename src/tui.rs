@@ -775,8 +775,16 @@ impl StatusBar {
 
         let mut hints: Vec<String> = Vec::with_capacity(3);
 
-        let sidebar = if app.sidebar_visible { "Hide" } else { "Show" };
-        hints.push(format!("Ctrl+S {sidebar} Sidebar"));
+        match app.tab_orientation {
+            TabOrientation::Sidebar => {
+                let label = if app.sidebar_visible { "Hide" } else { "Show" };
+                hints.push(format!("Ctrl+S {label} Sidebar"));
+            }
+            TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
+                let label = if app.tab_bar_visible { "Hide" } else { "Show" };
+                hints.push(format!("Ctrl+S {label} Tab Bar"));
+            }
+        }
 
         if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
             let focused = match app.active_tab {
@@ -863,8 +871,7 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     let search_table_area =
         render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
 
-    let [table_area, _spark_placeholder] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(search_table_area);
+    let table_area = search_table_area;
 
     let clamped_scroll = app.proc_scroll.min(count.saturating_sub(1));
     let max_visible = (table_area.height as usize).saturating_sub(3);
@@ -1310,8 +1317,7 @@ mod tests {
             let (_, hints) = StatusBar::build(&app).display();
             assert!(
                 hints.contains("/ Search"),
-                "{:?} should show search hint",
-                tab
+                "{tab:?} should show search hint",
             );
         }
         app.active_tab = Tab::Dash;
