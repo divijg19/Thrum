@@ -10,13 +10,15 @@
 
 use std::time::Duration;
 
+fn restore_terminal() {
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    ratatui::restore();
+}
+
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            let _ = execute!(std::io::stdout(), DisableMouseCapture);
-            ratatui::restore();
-        }
+        restore_terminal();
     }
 }
 
@@ -48,6 +50,12 @@ fn main() -> std::io::Result<()> {
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let _guard = TerminalGuard;
+
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        prev_hook(info);
+    }));
     let mut app = app::App::new();
     app.apply_config(&cfg);
     if let Ok((w, h)) = crossterm::terminal::size() {
@@ -57,7 +65,7 @@ fn main() -> std::io::Result<()> {
     let mut samplers = samplers::Samplers::new();
     let refresh = Duration::from_millis(cfg.refresh_ms);
 
-    let mut last_samples = samplers.sample(app.active_tab == app::Tab::Proc);
+    let mut last_samples = samplers::Samples::default();
 
     loop {
         if !app.paused {
@@ -142,6 +150,7 @@ fn main() -> std::io::Result<()> {
                     app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
                 }
                 Err(e) => {
+                    samplers = samplers::Samplers::new();
                     let msg = if let Some(s) = e.downcast_ref::<&str>() {
                         s.to_string()
                     } else if let Some(s) = e.downcast_ref::<String>() {

@@ -429,7 +429,8 @@ impl App {
             };
             let data_start = tab_y + search_h + 2;
             if row >= data_start {
-                self.proc_selection = self.proc_scroll.saturating_add((row - data_start) as usize);
+                let offset = (row - data_start) as usize;
+                self.proc_selection = self.proc_scroll.saturating_add(offset.min(1000));
             }
         }
     }
