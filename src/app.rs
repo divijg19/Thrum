@@ -9,6 +9,8 @@ use sysinfo::Signal;
 
 pub const PAGE_SIZE: usize = 10;
 pub const WINDOW: usize = 60;
+pub const MAX_QUERY_LEN: usize = 256;
+pub const MAX_CLICK_OFFSET: usize = 1000;
 
 pub enum CliAction {
     Help,
@@ -199,7 +201,7 @@ impl App {
         self.tab_orientation = cfg.tab_orientation;
         self.proc_sort_field = cfg.proc_sort_default;
         self.proc_sort_asc = cfg.proc_sort_asc_default;
-        self.history_window = cfg.history_window.max(1);
+        self.history_window = cfg.history_window.clamp(1, 3600);
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -387,11 +389,13 @@ impl App {
                 self.proc_selection = self.proc_selection.saturating_sub(3);
                 self.selected_pid = None;
                 self.selected_name = None;
+                self.kill_state = None;
             }
             MouseEventKind::ScrollDown if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(3);
                 self.selected_pid = None;
                 self.selected_name = None;
+                self.kill_state = None;
             }
             _ => {}
         }
@@ -406,6 +410,7 @@ impl App {
             let idx = (row - 1) as usize;
             if idx < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx];
+                self.kill_state = None;
                 return;
             }
         }
@@ -415,6 +420,7 @@ impl App {
             let idx = col.saturating_sub(1) / tab_width;
             if (idx as usize) < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx as usize];
+                self.kill_state = None;
                 return;
             }
         }
@@ -427,6 +433,7 @@ impl App {
             let idx = col.saturating_sub(1) / tab_width;
             if (idx as usize) < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx as usize];
+                self.kill_state = None;
                 return;
             }
         }
@@ -444,9 +451,12 @@ impl App {
             let data_start = tab_y + search_h + 2;
             if row >= data_start {
                 let offset = (row - data_start) as usize;
-                self.proc_selection = self.proc_scroll.saturating_add(offset.min(1000));
+                self.proc_selection = self
+                    .proc_scroll
+                    .saturating_add(offset.min(MAX_CLICK_OFFSET));
                 self.selected_pid = None;
                 self.selected_name = None;
+                self.kill_state = None;
             }
         }
     }
@@ -638,7 +648,7 @@ pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
 fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char(c) if key.modifiers.is_empty() => {
-            if query.len() < 256 {
+            if query.len() < MAX_QUERY_LEN {
                 query.push(c);
             }
             true
@@ -1748,6 +1758,27 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Dash);
     }
 
+    #[test]
+    fn kill_state_dismissed_on_proc_click() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.kill_state = Some(KillState::Confirm);
+        app.handle_mouse(20, 5, MouseEventKind::Down(MouseButton::Left));
+        assert!(app.kill_state.is_none(), "Proc click clears kill_state");
+    }
+
+    #[test]
+    fn kill_state_dismissed_on_tab_switch_click() {
+        let mut app = App::new();
+        app.kill_state = Some(KillState::Confirm);
+        app.handle_mouse(1, 3, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Net, "click switches to Net tab");
+        assert!(
+            app.kill_state.is_none(),
+            "tab switch click clears kill_state"
+        );
+    }
+
     // --- Mouse scroll ---
 
     #[test]
@@ -1756,9 +1787,11 @@ mod tests {
         app.active_tab = Tab::Proc;
         app.selected_pid = Some(42);
         app.selected_name = Some("bash".to_owned());
+        app.kill_state = Some(KillState::Confirm);
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
         assert!(app.selected_pid.is_none(), "scroll clears selected_pid");
         assert!(app.selected_name.is_none(), "scroll clears selected_name");
+        assert!(app.kill_state.is_none(), "scroll clears kill_state");
     }
 
     #[test]
@@ -1799,6 +1832,24 @@ mod tests {
         assert_eq!(app.proc_selection, 5);
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
         assert_eq!(app.proc_selection, 5);
+    }
+
+    #[test]
+    fn kill_state_dismissed_on_scroll_up() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.kill_state = Some(KillState::Confirm);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert!(app.kill_state.is_none(), "ScrollUp clears kill_state");
+    }
+
+    #[test]
+    fn kill_state_dismissed_on_scroll_down() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.kill_state = Some(KillState::Confirm);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert!(app.kill_state.is_none(), "ScrollDown clears kill_state");
     }
 
     // --- Mouse other events ignored ---
@@ -1927,5 +1978,11 @@ mod tests {
         };
         app.apply_config(&cfg);
         assert_eq!(app.history_window, 120);
+        let cfg = Config {
+            history_window: 9999,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.history_window, 3600, "history_window capped at 3600");
     }
 }
