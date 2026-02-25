@@ -472,6 +472,8 @@ pub struct Config {
     pub proc_sort_default: ProcSortField,
     pub proc_sort_asc_default: bool,
     pub history_window: usize,
+    #[serde(skip)]
+    pub config_warning: Option<String>,
 }
 
 impl Default for Config {
@@ -484,6 +486,7 @@ impl Default for Config {
             proc_sort_default: ProcSortField::Cpu,
             proc_sort_asc_default: false,
             history_window: 60,
+            config_warning: None,
         }
     }
 }
@@ -496,27 +499,11 @@ fn default_config_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".config/thrum/config.toml"))
 }
 
-fn read_config_file(path: &Path) -> Option<Config> {
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "warning: config file '{}' is unreadable: {e}",
-                    path.display()
-                );
-            }
-            return None;
-        }
-    };
+fn read_config_file(path: &Path) -> Result<Config, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("config file '{}' is unreadable: {e}", path.display()))?;
     toml::from_str(&content)
-        .inspect_err(|e| {
-            eprintln!(
-                "warning: config file '{}' has invalid TOML: {e}",
-                path.display()
-            );
-        })
-        .ok()
+        .map_err(|e| format!("config file '{}' has invalid TOML: {e}", path.display()))
 }
 
 pub fn print_help() {
@@ -557,13 +544,20 @@ pub fn parse_args(args: &[String]) -> CliAction {
                 return CliAction::Error(format!("config file '{path}' not found"));
             }
             match read_config_file(p) {
-                Some(c) => c,
-                None => return CliAction::Error(format!("config file '{path}' has invalid TOML")),
+                Ok(c) => c,
+                Err(e) => return CliAction::Error(e),
             }
         }
-        None => default_config_path()
-            .and_then(|p| read_config_file(&p))
-            .unwrap_or_default(),
+        None => match default_config_path() {
+            Some(p) => match read_config_file(&p) {
+                Ok(cfg) => cfg,
+                Err(e) => Config {
+                    config_warning: Some(e),
+                    ..Config::default()
+                },
+            },
+            None => Config::default(),
+        },
     };
 
     let mut i = 0;
@@ -669,6 +663,11 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
             *focused = false;
             false
         }
+        KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Delete => {
+            *focused = false;
+            true
+        }
+        KeyCode::F(_) | KeyCode::Insert | KeyCode::Home | KeyCode::End | KeyCode::Null => true,
         _ => {
             *focused = false;
             true
@@ -1190,6 +1189,18 @@ mod tests {
         // Second Tab: now cycles to next tab
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Net);
+    }
+
+    #[test]
+    fn search_f_key_does_not_exit() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.proc_query = "test".to_owned();
+        assert!(app.proc_search_focused);
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(app.proc_search_focused, "F1 should not exit search");
+        assert_eq!(app.proc_query, "test", "F1 should not clear query");
     }
 
     #[test]
@@ -1984,5 +1995,16 @@ mod tests {
         };
         app.apply_config(&cfg);
         assert_eq!(app.history_window, 3600, "history_window capped at 3600");
+    }
+
+    #[test]
+    fn read_config_file_invalid_toml() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("thrum_test_bad_config.toml");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "invalid toml {{{").unwrap();
+        let err = read_config_file(&path).unwrap_err();
+        assert!(err.contains("invalid TOML"), "error: {err}");
+        let _ = std::fs::remove_file(&path);
     }
 }
