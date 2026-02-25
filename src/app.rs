@@ -143,6 +143,11 @@ pub struct App {
     pub net_search_focused: bool,
     pub files_query: String,
     pub files_search_focused: bool,
+    pub net_scroll: usize,
+    pub net_selection: usize,
+    pub files_scroll: usize,
+    pub files_selection: usize,
+    pub scroll_step: usize,
     pub proc_sort_field: ProcSortField,
     pub proc_sort_asc: bool,
     pub should_quit: bool,
@@ -182,6 +187,11 @@ impl App {
             net_search_focused: false,
             files_query: String::new(),
             files_search_focused: false,
+            net_scroll: 0,
+            net_selection: 0,
+            files_scroll: 0,
+            files_selection: 0,
+            scroll_step: 3,
             proc_sort_field: ProcSortField::Cpu,
             proc_sort_asc: false,
             should_quit: false,
@@ -202,6 +212,7 @@ impl App {
         self.proc_sort_field = cfg.proc_sort_default;
         self.proc_sort_asc = cfg.proc_sort_asc_default;
         self.history_window = cfg.history_window.clamp(1, 3600);
+        self.scroll_step = cfg.scroll_step.min(100);
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -292,14 +303,8 @@ impl App {
             KeyCode::Char('?') if key.modifiers.is_empty() => {
                 self.help_visible = !self.help_visible;
             }
-            KeyCode::Tab => {
-                let idx = self.active_tab.index();
-                self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
-            }
-            KeyCode::BackTab => {
-                let idx = self.active_tab.index();
-                self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
-            }
+            KeyCode::Tab => self.cycle_tab(true),
+            KeyCode::BackTab => self.cycle_tab(false),
             KeyCode::Char('1') if key.modifiers.is_empty() => self.active_tab = Tab::Dash,
             KeyCode::Char('2') if key.modifiers.is_empty() => self.active_tab = Tab::Proc,
             KeyCode::Char('3') if key.modifiers.is_empty() => self.active_tab = Tab::Net,
@@ -350,14 +355,37 @@ impl App {
                 self.selected_pid = None;
                 self.selected_name = None;
             }
+            KeyCode::Up if self.active_tab == Tab::Net => {
+                self.net_selection = self.net_selection.saturating_sub(1);
+            }
+            KeyCode::Down if self.active_tab == Tab::Net => {
+                self.net_selection = self.net_selection.saturating_add(1);
+            }
+            KeyCode::PageUp if self.active_tab == Tab::Net => {
+                self.net_selection = self.net_selection.saturating_sub(PAGE_SIZE);
+            }
+            KeyCode::PageDown if self.active_tab == Tab::Net => {
+                self.net_selection = self.net_selection.saturating_add(PAGE_SIZE);
+            }
+            KeyCode::Up if self.active_tab == Tab::Files => {
+                self.files_selection = self.files_selection.saturating_sub(1);
+            }
+            KeyCode::Down if self.active_tab == Tab::Files => {
+                self.files_selection = self.files_selection.saturating_add(1);
+            }
+            KeyCode::PageUp if self.active_tab == Tab::Files => {
+                self.files_selection = self.files_selection.saturating_sub(PAGE_SIZE);
+            }
+            KeyCode::PageDown if self.active_tab == Tab::Files => {
+                self.files_selection = self.files_selection.saturating_add(PAGE_SIZE);
+            }
             KeyCode::Right
                 if matches!(
                     self.tab_orientation,
                     TabOrientation::Horizontal | TabOrientation::HorizontalFooter
                 ) =>
             {
-                let idx = self.active_tab.index();
-                self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
+                self.cycle_tab(true);
             }
             KeyCode::Left
                 if matches!(
@@ -365,8 +393,7 @@ impl App {
                     TabOrientation::Horizontal | TabOrientation::HorizontalFooter
                 ) =>
             {
-                let idx = self.active_tab.index();
-                self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
+                self.cycle_tab(false);
             }
             KeyCode::Delete if self.active_tab == Tab::Proc && self.selected_pid.is_some() => {
                 self.kill_state = Some(KillState::Confirm);
@@ -385,17 +412,49 @@ impl App {
     pub fn handle_mouse(&mut self, col: u16, row: u16, kind: MouseEventKind) {
         match kind {
             MouseEventKind::Down(MouseButton::Left) => self.handle_click(col, row),
-            MouseEventKind::ScrollUp if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_sub(3);
-                self.selected_pid = None;
-                self.selected_name = None;
-                self.kill_state = None;
+            MouseEventKind::ScrollUp => {
+                if self.is_on_tab_bar(col, row) {
+                    self.cycle_tab(false);
+                    return;
+                }
+                match self.active_tab {
+                    Tab::Proc => {
+                        self.proc_selection = self.proc_selection.saturating_sub(self.scroll_step);
+                        self.selected_pid = None;
+                        self.selected_name = None;
+                        self.kill_state = None;
+                    }
+                    Tab::Net => {
+                        self.net_selection = self.net_selection.saturating_sub(self.scroll_step);
+                    }
+                    Tab::Files => {
+                        self.files_selection =
+                            self.files_selection.saturating_sub(self.scroll_step);
+                    }
+                    _ => {}
+                }
             }
-            MouseEventKind::ScrollDown if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_add(3);
-                self.selected_pid = None;
-                self.selected_name = None;
-                self.kill_state = None;
+            MouseEventKind::ScrollDown => {
+                if self.is_on_tab_bar(col, row) {
+                    self.cycle_tab(true);
+                    return;
+                }
+                match self.active_tab {
+                    Tab::Proc => {
+                        self.proc_selection = self.proc_selection.saturating_add(self.scroll_step);
+                        self.selected_pid = None;
+                        self.selected_name = None;
+                        self.kill_state = None;
+                    }
+                    Tab::Net => {
+                        self.net_selection = self.net_selection.saturating_add(self.scroll_step);
+                    }
+                    Tab::Files => {
+                        self.files_selection =
+                            self.files_selection.saturating_add(self.scroll_step);
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -459,6 +518,61 @@ impl App {
                 self.kill_state = None;
             }
         }
+
+        if self.active_tab == Tab::Net {
+            let tab_y: u16 = match self.tab_orientation {
+                TabOrientation::Horizontal if self.tab_bar_visible => 2,
+                _ => 1,
+            };
+            let search_h: u16 = if !self.net_query.is_empty() || self.net_search_focused {
+                3
+            } else {
+                0
+            };
+            let data_start = tab_y + search_h + 2;
+            if row >= data_start {
+                let offset = (row - data_start) as usize;
+                self.net_selection = self.net_scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
+            }
+        }
+
+        if self.active_tab == Tab::Files {
+            let tab_y: u16 = match self.tab_orientation {
+                TabOrientation::Horizontal if self.tab_bar_visible => 2,
+                _ => 1,
+            };
+            let search_h: u16 = if !self.files_query.is_empty() || self.files_search_focused {
+                3
+            } else {
+                0
+            };
+            let data_start = tab_y + search_h + 2;
+            if row >= data_start {
+                let offset = (row - data_start) as usize;
+                self.files_selection = self
+                    .files_scroll
+                    .saturating_add(offset.min(MAX_CLICK_OFFSET));
+            }
+        }
+    }
+
+    fn is_on_tab_bar(&self, col: u16, row: u16) -> bool {
+        match self.tab_orientation {
+            TabOrientation::Sidebar if self.sidebar_visible => {
+                (1..=9).contains(&col) && row >= 1 && ((row - 1) as usize) < Tab::ALL.len()
+            }
+            TabOrientation::Horizontal if self.tab_bar_visible => row == 1,
+            TabOrientation::HorizontalFooter if self.tab_bar_visible => {
+                row == self.term_height.saturating_sub(3)
+            }
+            _ => false,
+        }
+    }
+
+    fn cycle_tab(&mut self, forward: bool) {
+        let idx = self.active_tab.index();
+        let n = Tab::ALL.len();
+        self.active_tab = Tab::ALL[(idx + if forward { 1 } else { n - 1 }) % n];
     }
 }
 
@@ -472,6 +586,7 @@ pub struct Config {
     pub proc_sort_default: ProcSortField,
     pub proc_sort_asc_default: bool,
     pub history_window: usize,
+    pub scroll_step: usize,
     #[serde(skip)]
     pub config_warning: Option<String>,
 }
@@ -486,6 +601,7 @@ impl Default for Config {
             proc_sort_default: ProcSortField::Cpu,
             proc_sort_asc_default: false,
             history_window: 60,
+            scroll_step: 3,
             config_warning: None,
         }
     }
@@ -514,6 +630,7 @@ pub fn print_help() {
     eprintln!("  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)");
     eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
     eprintln!("  --tabs <mode>         Tab orientation: sidebar, horizontal, or horizontal_footer");
+    eprintln!("  --scroll-step <n>     Mouse scroll step (default: 3)");
     eprintln!("  -V, --version         Show version");
     eprintln!("  --help                Show this help");
 }
@@ -614,6 +731,20 @@ pub fn parse_args(args: &[String]) -> CliAction {
                     }
                     None => return CliAction::Error("--tabs requires a value".to_owned()),
                 }
+            }
+            "--scroll-step" => {
+                i += 1;
+                cfg.scroll_step = match args.get(i) {
+                    Some(val) => match val.parse() {
+                        Ok(n) if n > 0 => n,
+                        _ => {
+                            return CliAction::Error(
+                                "--scroll-step must be a positive integer".to_owned(),
+                            );
+                        }
+                    },
+                    None => return CliAction::Error("--scroll-step requires a value".to_owned()),
+                };
             }
             "-c" | "--config" => {
                 if i + 1 >= args.len() {
@@ -959,6 +1090,61 @@ mod tests {
         assert_eq!(app.proc_selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert!(app.kill_state.is_none());
+    }
+
+    // --- Net/Files keyboard navigation ---
+
+    #[test]
+    fn net_files_keyboard_navigation() {
+        let mut app = App::new();
+
+        app.active_tab = Tab::Net;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 2);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, PAGE_SIZE);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 0);
+
+        app.active_tab = Tab::Files;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 2);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, PAGE_SIZE);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.files_selection, 0);
+    }
+
+    #[test]
+    fn net_files_keyboard_noop_on_non_scrollable_tabs() {
+        let mut app = App::new();
+        app.net_selection = 3;
+        app.files_selection = 5;
+        app.active_tab = Tab::Dash;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_selection, 5, "Files unchanged on Dash");
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_selection, 5, "Files unchanged on Dash");
     }
 
     #[test]
@@ -1863,6 +2049,63 @@ mod tests {
         assert!(app.kill_state.is_none(), "ScrollDown clears kill_state");
     }
 
+    // --- Net/Files mouse scroll ---
+
+    #[test]
+    fn net_files_mouse_scroll() {
+        let mut app = App::new();
+
+        app.active_tab = Tab::Net;
+        app.net_selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.net_selection, 2, "Net scroll up by default step 3");
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(app.net_selection, 5, "Net scroll down by default step 3");
+
+        app.active_tab = Tab::Files;
+        app.files_selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.files_selection, 2, "Files scroll up by default step 3");
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(
+            app.files_selection, 5,
+            "Files scroll down by default step 3"
+        );
+    }
+
+    #[test]
+    fn net_files_mouse_scroll_wraps_at_zero() {
+        let mut app = App::new();
+
+        app.active_tab = Tab::Net;
+        app.net_selection = 1;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.net_selection, 0);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.net_selection, 0);
+
+        app.active_tab = Tab::Files;
+        app.files_selection = 1;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.files_selection, 0);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.files_selection, 0);
+    }
+
+    #[test]
+    fn net_files_mouse_scroll_noop_on_non_scrollable_tabs() {
+        let mut app = App::new();
+        app.net_selection = 3;
+        app.files_selection = 7;
+        app.active_tab = Tab::Dash;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_selection, 7, "Files unchanged on Dash");
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_selection, 7, "Files unchanged on Dash");
+    }
+
     // --- Mouse other events ignored ---
 
     #[test]
@@ -1928,6 +2171,54 @@ mod tests {
         // Click on tab 8 (Mem) at col=70, row=21
         app.handle_mouse(70, 21, MouseEventKind::Down(MouseButton::Left));
         assert_eq!(app.active_tab, Tab::Mem);
+    }
+
+    // --- Tab-bar mouse wheel ---
+
+    #[test]
+    fn tab_bar_mouse_wheel_switches_tabs() {
+        // Sidebar: scroll up on col 5 cycles backward
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_mouse(5, 1, MouseEventKind::ScrollUp);
+        assert_eq!(app.active_tab, Tab::Mem, "sidebar scroll up wraps to last");
+        app.handle_mouse(5, 1, MouseEventKind::ScrollDown);
+        assert_eq!(app.active_tab, Tab::Dash, "sidebar scroll down to first");
+
+        // Horizontal: scroll on row 1
+        app.tab_orientation = TabOrientation::Horizontal;
+        app.tab_bar_visible = true;
+        app.term_width = 80;
+        app.active_tab = Tab::Dash;
+        app.handle_mouse(10, 1, MouseEventKind::ScrollDown);
+        assert_eq!(app.active_tab, Tab::Proc, "horizontal scroll down");
+        app.handle_mouse(10, 1, MouseEventKind::ScrollUp);
+        assert_eq!(app.active_tab, Tab::Dash, "horizontal scroll up");
+
+        // HorizontalFooter: scroll on bottom row
+        app.tab_orientation = TabOrientation::HorizontalFooter;
+        app.term_height = 24;
+        app.active_tab = Tab::Dash;
+        app.handle_mouse(10, 21, MouseEventKind::ScrollDown);
+        assert_eq!(app.active_tab, Tab::Proc, "footer scroll down");
+        app.handle_mouse(10, 21, MouseEventKind::ScrollUp);
+        assert_eq!(app.active_tab, Tab::Dash, "footer scroll up");
+    }
+
+    #[test]
+    fn tab_bar_mouse_wheel_outside_tab_bar_ignored() {
+        let mut app = App::new();
+        app.active_tab = Tab::Dash;
+        // Scroll at col=0 (outside sidebar) should not switch tabs
+        app.handle_mouse(0, 2, MouseEventKind::ScrollDown);
+        assert_eq!(app.active_tab, Tab::Dash, "col 0 not on sidebar");
+
+        // Horizontal: scroll at row 2 (not tab bar) should not switch tabs
+        app.tab_orientation = TabOrientation::Horizontal;
+        app.tab_bar_visible = true;
+        app.term_width = 80;
+        app.handle_mouse(10, 2, MouseEventKind::ScrollDown);
+        assert_eq!(app.active_tab, Tab::Dash, "not on horizontal tab bar row");
     }
 
     // --- Config expansion ---
@@ -2006,5 +2297,61 @@ mod tests {
         let err = read_config_file(&path).unwrap_err();
         assert!(err.contains("invalid TOML"), "error: {err}");
         let _ = std::fs::remove_file(&path);
+    }
+
+    // --- Scroll step configuration ---
+
+    #[test]
+    fn scroll_step_config_deserialize() {
+        let toml_str = "scroll_step = 7\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.scroll_step, 7);
+
+        let toml_str = "";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.scroll_step, 3, "default scroll_step");
+    }
+
+    #[test]
+    fn scroll_step_cli_flag() {
+        let cfg = parse_config(&["--scroll-step", "5"]);
+        assert_eq!(cfg.scroll_step, 5);
+
+        let cfg = parse_config(&[]);
+        assert_eq!(cfg.scroll_step, 3, "default from Config::default()");
+    }
+
+    #[test]
+    fn apply_config_sets_scroll_step() {
+        let mut app = App::new();
+        assert_eq!(app.scroll_step, 3, "default in App");
+
+        let cfg = Config {
+            scroll_step: 10,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.scroll_step, 10);
+
+        // Cap at 100
+        let cfg = Config {
+            scroll_step: 999,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.scroll_step, 100, "scroll_step capped at 100");
+
+        // Verify configured step affects mouse scroll
+        let cfg = Config {
+            scroll_step: 5,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        app.active_tab = Tab::Net;
+        app.net_selection = 20;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.net_selection, 15, "scroll uses configured step of 5");
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(app.net_selection, 20, "scroll down uses configured step");
     }
 }
