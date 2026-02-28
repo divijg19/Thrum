@@ -7,10 +7,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventK
 use serde::Deserialize;
 use sysinfo::Signal;
 
+use crate::samplers::Samples;
+
 pub const PAGE_SIZE: usize = 10;
 pub const WINDOW: usize = 60;
 pub const MAX_QUERY_LEN: usize = 256;
 pub const MAX_CLICK_OFFSET: usize = 1000;
+
+pub const KILL_SIGNAL_MAP: &[(char, &str, Signal)] = &[
+    ('1', "SIGTERM", Signal::Term),
+    ('2', "SIGKILL", Signal::Kill),
+    ('3', "SIGINT", Signal::Interrupt),
+    ('4', "SIGHUP", Signal::Hangup),
+    ('5', "SIGSTOP", Signal::Stop),
+    ('6', "SIGCONT", Signal::Continue),
+];
 
 pub enum CliAction {
     Help,
@@ -262,17 +273,13 @@ impl App {
         }
 
         if self.kill_state == Some(KillState::Confirm) {
-            match key.code {
-                KeyCode::Char('1') => self.kill_state = Some(KillState::Dispatch(Signal::Term)),
-                KeyCode::Char('2') => self.kill_state = Some(KillState::Dispatch(Signal::Kill)),
-                KeyCode::Char('3') => {
-                    self.kill_state = Some(KillState::Dispatch(Signal::Interrupt))
-                }
-                KeyCode::Char('4') => self.kill_state = Some(KillState::Dispatch(Signal::Hangup)),
-                KeyCode::Char('5') => self.kill_state = Some(KillState::Dispatch(Signal::Stop)),
-                KeyCode::Char('6') => self.kill_state = Some(KillState::Dispatch(Signal::Continue)),
-                _ => self.kill_state = None,
-            }
+            self.kill_state = match key.code {
+                KeyCode::Char(c) => KILL_SIGNAL_MAP
+                    .iter()
+                    .find(|&&(k, _, _)| k == c)
+                    .map(|&(_, _, s)| KillState::Dispatch(s)),
+                _ => None,
+            };
             return;
         }
 
@@ -305,15 +312,12 @@ impl App {
             }
             KeyCode::Tab => self.cycle_tab(true),
             KeyCode::BackTab => self.cycle_tab(false),
-            KeyCode::Char('1') if key.modifiers.is_empty() => self.active_tab = Tab::Dash,
-            KeyCode::Char('2') if key.modifiers.is_empty() => self.active_tab = Tab::Proc,
-            KeyCode::Char('3') if key.modifiers.is_empty() => self.active_tab = Tab::Net,
-            KeyCode::Char('4') if key.modifiers.is_empty() => self.active_tab = Tab::Files,
-            KeyCode::Char('5') if key.modifiers.is_empty() => self.active_tab = Tab::Time,
-            KeyCode::Char('6') if key.modifiers.is_empty() => self.active_tab = Tab::Temp,
-            KeyCode::Char('7') if key.modifiers.is_empty() => self.active_tab = Tab::Cores,
-            KeyCode::Char('8') if key.modifiers.is_empty() => self.active_tab = Tab::Disk,
-            KeyCode::Char('9') if key.modifiers.is_empty() => self.active_tab = Tab::Mem,
+            KeyCode::Char(c) if key.modifiers.is_empty() && c.is_ascii_digit() && c != '0' => {
+                let idx = (c as u8 - b'1') as usize;
+                if idx < Tab::ALL.len() {
+                    self.active_tab = Tab::ALL[idx];
+                }
+            }
             KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
                 Tab::Proc => self.proc_search_focused = true,
                 Tab::Net => self.net_search_focused = true,
@@ -444,27 +448,24 @@ impl App {
             }
         }
 
-        if self.tab_orientation == TabOrientation::Horizontal && self.tab_bar_visible && row == 1 {
-            let tab_width = (self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16)).max(1);
-            let idx = col.saturating_sub(1) / tab_width;
-            if (idx as usize) < Tab::ALL.len() {
-                self.active_tab = Tab::ALL[idx as usize];
-                self.kill_state = None;
-                return;
-            }
+        if self.tab_orientation == TabOrientation::Horizontal
+            && self.tab_bar_visible
+            && row == 1
+            && let Some(idx) = self.tab_from_horizontal_click(col)
+        {
+            self.active_tab = Tab::ALL[idx];
+            self.kill_state = None;
+            return;
         }
 
         if self.tab_orientation == TabOrientation::HorizontalFooter
             && self.tab_bar_visible
             && row == self.term_height.saturating_sub(3)
+            && let Some(idx) = self.tab_from_horizontal_click(col)
         {
-            let tab_width = (self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16)).max(1);
-            let idx = col.saturating_sub(1) / tab_width;
-            if (idx as usize) < Tab::ALL.len() {
-                self.active_tab = Tab::ALL[idx as usize];
-                self.kill_state = None;
-                return;
-            }
+            self.active_tab = Tab::ALL[idx];
+            self.kill_state = None;
+            return;
         }
 
         if matches!(self.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
@@ -543,6 +544,89 @@ impl App {
         let idx = self.active_tab.index();
         let n = Tab::ALL.len();
         self.active_tab = Tab::ALL[(idx + if forward { 1 } else { n - 1 }) % n];
+    }
+
+    pub fn refresh_term_size(&mut self) -> bool {
+        if let Ok((w, h)) = crossterm::terminal::size() {
+            self.term_width = w;
+            self.term_height = h;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn push_history(&mut self, samples: &Samples) {
+        push_bounded(
+            &mut self.cpu_history,
+            samples.cpu_usage as u64,
+            self.history_window,
+        );
+
+        let mem_pct = pct(samples.mem_used, samples.mem_total) as u64;
+        push_bounded(&mut self.mem_history, mem_pct, self.history_window);
+
+        push_bounded(
+            &mut self.net_rx_history,
+            samples.net_rx_rate,
+            self.history_window,
+        );
+        push_bounded(
+            &mut self.net_tx_history,
+            samples.net_tx_rate,
+            self.history_window,
+        );
+
+        push_bounded(
+            &mut self.disk_read_history,
+            samples.disk_read_rate,
+            self.history_window,
+        );
+        push_bounded(
+            &mut self.disk_write_history,
+            samples.disk_write_rate,
+            self.history_window,
+        );
+
+        let valid_temps: Vec<f32> = samples
+            .temperatures
+            .iter()
+            .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
+            .collect();
+        let avg_temp = if valid_temps.is_empty() {
+            0.0
+        } else {
+            valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
+        };
+        push_bounded(
+            &mut self.temp_history,
+            (avg_temp * 10.0) as u64,
+            self.history_window,
+        );
+
+        let avg_usage = if samples.disks.is_empty() {
+            0.0
+        } else {
+            samples.disks.iter().map(|d| d.usage_pct).sum::<f32>() / samples.disks.len() as f32
+        };
+        push_bounded(
+            &mut self.disk_usage_history,
+            (avg_usage * 10.0) as u64,
+            self.history_window,
+        );
+
+        let swap_pct = pct(samples.swap_used, samples.swap_total) as u64;
+        push_bounded(&mut self.swap_history, swap_pct, self.history_window);
+    }
+
+    fn tab_from_horizontal_click(&self, col: u16) -> Option<usize> {
+        let tab_width = (self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16)).max(1);
+        let idx = col.saturating_sub(1) / tab_width;
+        if (idx as usize) < Tab::ALL.len() {
+            Some(idx as usize)
+        } else {
+            None
+        }
     }
 }
 
@@ -913,25 +997,15 @@ mod tests {
 
     #[test]
     fn key_numbers_jump_to_tab() {
-        let mut app = App::new();
-        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Proc);
-        app.handle_key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Files);
-        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Dash);
-        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Time);
-        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Net);
-        app.handle_key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Temp);
-        app.handle_key(KeyEvent::new(KeyCode::Char('7'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Cores);
-        app.handle_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Disk);
-        app.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Mem);
+        for (i, tab) in Tab::ALL.iter().enumerate() {
+            let key_char = (b'1' + i as u8) as char;
+            let mut app = App::new();
+            app.handle_key(KeyEvent::new(KeyCode::Char(key_char), KeyModifiers::NONE));
+            assert_eq!(
+                app.active_tab, *tab,
+                "key '{key_char}' should jump to {tab:?}"
+            );
+        }
     }
 
     #[test]
@@ -1168,13 +1242,7 @@ mod tests {
 
     #[test]
     fn kill_pending_sends_all_signals() {
-        for (key, expected) in [
-            ('2', Signal::Kill),
-            ('3', Signal::Interrupt),
-            ('4', Signal::Hangup),
-            ('5', Signal::Stop),
-            ('6', Signal::Continue),
-        ] {
+        for &(key, _, expected) in KILL_SIGNAL_MAP {
             let mut app = App::new();
             app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
             app.selected_pid = Some(42);
@@ -1664,6 +1732,108 @@ mod tests {
         push_bounded(&mut d, "c", 2);
         let v: Vec<&&str> = d.iter().collect();
         assert_eq!(v, vec![&"b", &"c"]);
+    }
+
+    #[test]
+    fn push_history_populates_all_histories() {
+        let mut app = App::new();
+        app.history_window = 10;
+        let samples = Samples {
+            cpu_usage: 42.0,
+            mem_used: 8_000_000_000,
+            mem_total: 16_000_000_000,
+            mem_available: 8_000_000_000,
+            mem_free: 4_000_000_000,
+            swap_used: 1_000_000_000,
+            swap_total: 4_000_000_000,
+            net_rx_rate: 1_000_000,
+            net_tx_rate: 500_000,
+            load_one: 0.5,
+            load_five: 0.3,
+            load_fifteen: 0.2,
+            processes: vec![],
+            interfaces: vec![],
+            disks: vec![],
+            disk_io: vec![],
+            disk_read_rate: 2_000_000,
+            disk_write_rate: 1_000_000,
+            temperatures: vec![],
+            cpus: vec![],
+            sys_info: crate::samplers::SysInfo::default(),
+        };
+        app.push_history(&samples);
+        assert_eq!(app.cpu_history.len(), 1);
+        assert_eq!(*app.cpu_history.front().unwrap(), 42);
+        assert_eq!(*app.mem_history.front().unwrap(), 50);
+        assert_eq!(*app.net_rx_history.front().unwrap(), 1_000_000);
+        assert_eq!(*app.net_tx_history.front().unwrap(), 500_000);
+        assert_eq!(*app.disk_read_history.front().unwrap(), 2_000_000);
+        assert_eq!(*app.disk_write_history.front().unwrap(), 1_000_000);
+        assert_eq!(*app.temp_history.front().unwrap(), 0);
+        assert_eq!(*app.disk_usage_history.front().unwrap(), 0);
+        assert_eq!(*app.swap_history.front().unwrap(), 25);
+    }
+
+    #[test]
+    fn push_history_respects_window() {
+        let mut app = App::new();
+        app.history_window = 2;
+        let samples = Samples {
+            cpu_usage: 42.0,
+            mem_used: 0,
+            mem_total: 0,
+            mem_available: 0,
+            mem_free: 0,
+            swap_used: 0,
+            swap_total: 0,
+            net_rx_rate: 0,
+            net_tx_rate: 0,
+            load_one: 0.0,
+            load_five: 0.0,
+            load_fifteen: 0.0,
+            processes: vec![],
+            interfaces: vec![],
+            disks: vec![],
+            disk_io: vec![],
+            disk_read_rate: 0,
+            disk_write_rate: 0,
+            temperatures: vec![],
+            cpus: vec![],
+            sys_info: crate::samplers::SysInfo::default(),
+        };
+        app.push_history(&samples);
+        app.push_history(&samples);
+        app.push_history(&samples);
+        assert_eq!(app.cpu_history.len(), 2);
+    }
+
+    #[test]
+    fn refresh_term_size_returns_bool() {
+        let mut app = App::new();
+        let result = app.refresh_term_size();
+        assert!(result, "terminal size should be readable");
+        assert!(app.term_width > 0);
+        assert!(app.term_height > 0);
+    }
+
+    #[test]
+    fn tab_from_horizontal_click_returns_correct_index() {
+        let mut app = App::new();
+        app.term_width = 80;
+        // tab_width = (80-2)/9 = 8
+        // cols 1-8 = tab 0, cols 9-16 = tab 1, etc.
+        assert_eq!(app.tab_from_horizontal_click(5), Some(0));
+        assert_eq!(app.tab_from_horizontal_click(10), Some(1));
+        assert_eq!(app.tab_from_horizontal_click(17), Some(2));
+        assert_eq!(app.tab_from_horizontal_click(73), None);
+    }
+
+    #[test]
+    fn tab_from_horizontal_click_out_of_bounds() {
+        let mut app = App::new();
+        app.term_width = 10;
+        // tab_width = (10-2)/9 = 0, max(1) = 1
+        assert_eq!(app.tab_from_horizontal_click(100), None);
     }
 
     #[test]
