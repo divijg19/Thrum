@@ -5,6 +5,34 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
 use crate::app::{App, KillState, MAX_QUERY_LEN, ProcSortField, Tab, TabOrientation};
+
+const MAX_HINTS: usize = 4;
+
+fn pct(part: u64, total: u64) -> f64 {
+    if total > 0 {
+        part as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    }
+}
+
+fn format_memory(gib: f64, pct: f64) -> String {
+    format!("{gib:.1} GiB  {pct:.1}%")
+}
+
+fn clamp_scroll(selection: usize, scroll: &mut usize, count: usize, height: u16) -> (usize, usize) {
+    let vis = (height as usize).saturating_sub(4);
+    if selection < *scroll {
+        *scroll = selection;
+    } else if vis > 0 && selection >= *scroll + vis {
+        *scroll = selection.saturating_add(1).saturating_sub(vis);
+    }
+    let clamped_scroll = (*scroll).min(count.saturating_sub(1));
+    let max_visible = (height as usize).saturating_sub(3);
+    let start = clamped_scroll;
+    let end = count.min(start + max_visible);
+    (start, end)
+}
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
@@ -76,7 +104,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .label(format!("CPU: {:.1}%", samples.cpu_usage.min(100.0)));
     frame.render_widget(&g, cpu_area);
 
-    let mem_pct_f = (samples.mem_used as f64 / samples.mem_total.max(1) as f64 * 100.0).min(100.0);
+    let mem_pct_f = pct(samples.mem_used, samples.mem_total.max(1)).min(100.0);
     let mem_pct = mem_pct_f as u16;
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
@@ -89,7 +117,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&mem_g, mem_area);
 
     let (swap_pct, swap_label) = if samples.swap_total > 0 {
-        let pct = (samples.swap_used as f64 / samples.swap_total as f64 * 100.0).min(100.0);
+        let pct = pct(samples.swap_used, samples.swap_total).min(100.0);
         let used_gb = samples.swap_used as f64 / 1_073_741_824.0;
         let total_gb = samples.swap_total as f64 / 1_073_741_824.0;
         (
@@ -363,37 +391,17 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let mem_avail_gb = samples.mem_available as f64 / 1_073_741_824.0;
     let mem_free_gb = samples.mem_free as f64 / 1_073_741_824.0;
 
-    let mem_used_pct = if samples.mem_total > 0 {
-        samples.mem_used as f64 / samples.mem_total as f64 * 100.0
-    } else {
-        0.0
-    };
-    let mem_avail_pct = if samples.mem_total > 0 {
-        samples.mem_available as f64 / samples.mem_total as f64 * 100.0
-    } else {
-        0.0
-    };
-    let mem_free_pct = if samples.mem_total > 0 {
-        samples.mem_free as f64 / samples.mem_total as f64 * 100.0
-    } else {
-        0.0
-    };
+    let mem_used_pct = pct(samples.mem_used, samples.mem_total);
+    let mem_avail_pct = pct(samples.mem_available, samples.mem_total);
+    let mem_free_pct = pct(samples.mem_free, samples.mem_total);
 
     let swap_total_gb = samples.swap_total as f64 / 1_073_741_824.0;
     let swap_used_gb = samples.swap_used as f64 / 1_073_741_824.0;
     let swap_free = samples.swap_total.saturating_sub(samples.swap_used);
     let swap_free_gb = swap_free as f64 / 1_073_741_824.0;
 
-    let swap_used_pct = if samples.swap_total > 0 {
-        samples.swap_used as f64 / samples.swap_total as f64 * 100.0
-    } else {
-        0.0
-    };
-    let swap_free_pct = if samples.swap_total > 0 {
-        swap_free as f64 / samples.swap_total as f64 * 100.0
-    } else {
-        0.0
-    };
+    let swap_used_pct = pct(samples.swap_used, samples.swap_total);
+    let swap_free_pct = pct(swap_free, samples.swap_total);
 
     let lines = vec![
         Line::from(vec![
@@ -402,15 +410,15 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         ]),
         Line::from(vec![
             Span::styled("Used        ", Style::new().bold()),
-            Span::raw(format!("{mem_used_gb:.1} GiB  {mem_used_pct:.1}%")),
+            Span::raw(format_memory(mem_used_gb, mem_used_pct)),
         ]),
         Line::from(vec![
             Span::styled("Available   ", Style::new().bold()),
-            Span::raw(format!("{mem_avail_gb:.1} GiB  {mem_avail_pct:.1}%")),
+            Span::raw(format_memory(mem_avail_gb, mem_avail_pct)),
         ]),
         Line::from(vec![
             Span::styled("Free        ", Style::new().bold()),
-            Span::raw(format!("{mem_free_gb:.1} GiB  {mem_free_pct:.1}%")),
+            Span::raw(format_memory(mem_free_gb, mem_free_pct)),
         ]),
         Line::from(Span::raw("")),
         Line::from(vec![
@@ -419,11 +427,11 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         ]),
         Line::from(vec![
             Span::styled("Used        ", Style::new().bold()),
-            Span::raw(format!("{swap_used_gb:.1} GiB  {swap_used_pct:.1}%")),
+            Span::raw(format_memory(swap_used_gb, swap_used_pct)),
         ]),
         Line::from(vec![
             Span::styled("Free        ", Style::new().bold()),
-            Span::raw(format!("{swap_free_gb:.1} GiB  {swap_free_pct:.1}%")),
+            Span::raw(format_memory(swap_free_gb, swap_free_pct)),
         ]),
     ];
 
@@ -537,17 +545,20 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     let count = filtered.len();
     app.files_selection = app.files_selection.min(count.saturating_sub(1));
 
-    let vis = (table_area.height as usize).saturating_sub(4);
-    if app.files_selection < app.files_scroll {
-        app.files_scroll = app.files_selection;
-    } else if vis > 0 && app.files_selection >= app.files_scroll + vis {
-        app.files_scroll = app.files_selection.saturating_add(1).saturating_sub(vis);
+    if count == 0 && !app.files_query.is_empty() {
+        let p = Paragraph::new("No matching filesystems")
+            .fg(Color::DarkGray)
+            .alignment(Alignment::Center);
+        frame.render_widget(p, table_area);
+        return;
     }
 
-    let clamped_scroll = app.files_scroll.min(count.saturating_sub(1));
-    let max_visible = (table_area.height as usize).saturating_sub(3);
-    let start = clamped_scroll;
-    let end = count.min(start + max_visible);
+    let (start, end) = clamp_scroll(
+        app.files_selection,
+        &mut app.files_scroll,
+        count,
+        table_area.height,
+    );
     let visible = &filtered[start..end];
     let rel_sel = app.files_selection.saturating_sub(start);
 
@@ -685,17 +696,20 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let count = filtered.len();
     app.net_selection = app.net_selection.min(count.saturating_sub(1));
 
-    let vis = (table_area.height as usize).saturating_sub(4);
-    if app.net_selection < app.net_scroll {
-        app.net_scroll = app.net_selection;
-    } else if vis > 0 && app.net_selection >= app.net_scroll + vis {
-        app.net_scroll = app.net_selection.saturating_add(1).saturating_sub(vis);
+    if count == 0 && !app.net_query.is_empty() {
+        let p = Paragraph::new("No matching interfaces")
+            .fg(Color::DarkGray)
+            .alignment(Alignment::Center);
+        frame.render_widget(p, table_area);
+        return;
     }
 
-    let clamped_scroll = app.net_scroll.min(count.saturating_sub(1));
-    let max_visible = (table_area.height as usize).saturating_sub(3);
-    let start = clamped_scroll;
-    let end = count.min(start + max_visible);
+    let (start, end) = clamp_scroll(
+        app.net_selection,
+        &mut app.net_scroll,
+        count,
+        table_area.height,
+    );
     let visible = &filtered[start..end];
     let rel_sel = app.net_selection.saturating_sub(start);
 
@@ -912,15 +926,15 @@ impl StatusBar {
             hints.push("Ctrl+K Kill!".to_owned());
         }
 
-        if hints.len() < 4 {
+        if hints.len() < MAX_HINTS {
             match app.active_tab {
                 Tab::Proc => hints.push("\u{2191}\u{2193} Select".to_owned()),
                 _ => hints.push("1-9 Tab".to_owned()),
             }
         }
 
-        if hints.len() > 4 {
-            hints.truncate(4);
+        if hints.len() > MAX_HINTS {
+            hints.truncate(MAX_HINTS);
         }
 
         Self { ctx, hints }
@@ -977,22 +991,22 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     app.selected_pid = filtered.get(app.proc_selection).map(|p| p.pid);
     app.selected_name = filtered.get(app.proc_selection).map(|p| p.name.clone());
 
-    let search_table_area =
-        render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
+    let table_area = render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
 
-    let table_area = search_table_area;
-
-    let vis = (table_area.height as usize).saturating_sub(4);
-    if app.proc_selection < app.proc_scroll {
-        app.proc_scroll = app.proc_selection;
-    } else if vis > 0 && app.proc_selection >= app.proc_scroll + vis {
-        app.proc_scroll = app.proc_selection.saturating_add(1).saturating_sub(vis);
+    if count == 0 && !app.proc_query.is_empty() {
+        let p = Paragraph::new("No matching processes")
+            .fg(Color::DarkGray)
+            .alignment(Alignment::Center);
+        frame.render_widget(p, table_area);
+        return;
     }
 
-    let clamped_scroll = app.proc_scroll.min(count.saturating_sub(1));
-    let max_visible = (table_area.height as usize).saturating_sub(3);
-    let start = clamped_scroll;
-    let end = count.min(start + max_visible);
+    let (start, end) = clamp_scroll(
+        app.proc_selection,
+        &mut app.proc_scroll,
+        count,
+        table_area.height,
+    );
     let visible = &filtered[start..end];
     let rel_sel = app.proc_selection.saturating_sub(start);
 
@@ -1536,7 +1550,10 @@ mod tests {
         app.selected_pid = Some(42);
         let (_, hints) = StatusBar::build(&app).display();
         let count = hints.matches(HINT_SEP).count() + 1;
-        assert!(count <= 4, "at most 4 hints, got {count}: {hints}");
+        assert!(
+            count <= MAX_HINTS,
+            "at most {MAX_HINTS} hints, got {count}: {hints}"
+        );
     }
 
     #[test]
