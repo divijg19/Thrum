@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, T
 
 use crate::app::{
     self, App, KillState, MAX_QUERY_LEN, ProcSortField, SelectionState, Tab, TabOrientation,
+    TabState,
 };
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
@@ -188,6 +189,14 @@ fn format_bytes(bytes: u64, binary: bool) -> String {
     }
 }
 
+fn format_memory_label(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1}GiB", bytes as f64 / 1_073_741_824.0)
+    } else {
+        format!("{:.0}MiB", bytes as f64 / 1_048_576.0)
+    }
+}
+
 fn format_temp(temp: Option<f32>) -> String {
     temp.filter(|t| t.is_finite()).map_or_else(
         || format!("{:>9}", "N/A"),
@@ -282,6 +291,80 @@ fn filter_processes<'a>(query: &str, processes: &'a [ProcessInfo]) -> Vec<&'a Pr
         .iter()
         .filter(|p| p.name.to_lowercase().contains(&q) || query_pid.is_some_and(|pid| p.pid == pid))
         .collect()
+}
+
+fn sort_processes(filtered: &mut [&ProcessInfo], field: ProcSortField, asc: bool) {
+    filtered.sort_unstable_by(|a, b| {
+        let ord = match field {
+            ProcSortField::Name => a.name.cmp(&b.name),
+            ProcSortField::Pid => a.pid.cmp(&b.pid),
+            ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
+            ProcSortField::Memory => a.memory.cmp(&b.memory),
+            ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
+            ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
+            ProcSortField::Status => a.status.cmp(&b.status),
+        };
+        if asc { ord } else { ord.reverse() }
+    });
+}
+
+#[expect(clippy::too_many_arguments)]
+fn render_filtered_table<'a, T>(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut TabState,
+    query: &str,
+    items: &'a [T],
+    title: impl Fn(usize, usize) -> String,
+    empty_msg: &str,
+    column_widths: &[Constraint],
+    headers: &[&str],
+    filter_fn: impl Fn(&T, &str) -> bool,
+    row_fn: impl Fn(&'a T, bool) -> Row<'a>,
+) -> bool {
+    let has_query = !query.is_empty();
+
+    let filtered: Vec<&T> = if has_query {
+        let q = query.to_lowercase();
+        items.iter().filter(|item| filter_fn(item, &q)).collect()
+    } else {
+        items.iter().collect()
+    };
+
+    let count = filtered.len();
+    state.selection = state.selection.min(count.saturating_sub(1));
+
+    if count == 0 && has_query {
+        let p = Paragraph::new(empty_msg)
+            .fg(Color::DarkGray)
+            .alignment(Alignment::Center);
+        frame.render_widget(p, area);
+        return false;
+    }
+
+    let (start, end) = clamp_scroll(state.selection, &mut state.scroll, count, area.height);
+    let visible = &filtered[start..end];
+    let rel_sel = state.selection.saturating_sub(start);
+
+    let rows: Vec<Row> = visible
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let is_selected = i == rel_sel;
+            let style = if is_selected {
+                Style::new().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            row_fn(item, is_selected).style(style)
+        })
+        .collect();
+
+    let table = Table::new(rows, column_widths)
+        .header(Row::new(headers.iter().map(|h| Cell::from(*h))))
+        .block(Block::bordered().title(title(count, items.len())));
+    frame.render_widget(table, area);
+    true
 }
 
 fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) -> Rect {
@@ -514,67 +597,35 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
 }
 
 fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let has_query = !app.files_state.query.is_empty();
-
     let content_area =
         render_search_bar(frame, area, &app.files_state.query, app.files_state.focused);
 
     let [table_area, spark_area] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(content_area);
 
-    let filtered: Vec<&DiskInfo> = if has_query {
-        let q = app.files_state.query.to_lowercase();
-        samples
-            .disks
-            .iter()
-            .filter(|d| {
-                d.mount_point.to_lowercase().contains(&q) || d.device.to_lowercase().contains(&q)
-            })
-            .collect()
-    } else {
-        samples.disks.iter().collect()
-    };
-
-    let count = filtered.len();
-    app.files_state.selection = app.files_state.selection.min(count.saturating_sub(1));
-
-    if count == 0 && !app.files_state.query.is_empty() {
-        let p = Paragraph::new("No matching filesystems")
-            .fg(Color::DarkGray)
-            .alignment(Alignment::Center);
-        frame.render_widget(p, table_area);
-        return;
-    }
-
-    let (start, end) = clamp_scroll(
-        app.files_state.selection,
-        &mut app.files_state.scroll,
-        count,
-        table_area.height,
-    );
-    let visible = &filtered[start..end];
-    let rel_sel = app.files_state.selection.saturating_sub(start);
-
-    let widths: [Constraint; 7] = [
-        Constraint::Length(14),
-        Constraint::Fill(1),
-        Constraint::Length(6),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(6),
-        Constraint::Length(7),
-    ];
-
-    let rows: Vec<Row> = visible
-        .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let is_selected = i == rel_sel;
-            let style = if is_selected {
-                Style::new().bg(Color::DarkGray)
-            } else {
-                Style::default()
-            };
+    let query = app.files_state.query.clone();
+    if !render_filtered_table(
+        frame,
+        table_area,
+        &mut app.files_state,
+        &query,
+        &samples.disks,
+        |count, total| format!(" Filesystems ({count}/{total}) "),
+        "No matching filesystems",
+        &[
+            Constraint::Length(14),
+            Constraint::Fill(1),
+            Constraint::Length(6),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(6),
+            Constraint::Length(7),
+        ],
+        &["Device", "Mount", "FS", "Size", "Avail", "Use%", "Kind"],
+        |d: &DiskInfo, q| {
+            d.mount_point.to_lowercase().contains(q) || d.device.to_lowercase().contains(q)
+        },
+        |d: &DiskInfo, _selected| {
             Row::new(vec![
                 Cell::from(d.device.as_str()),
                 Cell::from(d.mount_point.as_str()),
@@ -593,18 +644,10 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
                 )),
                 Cell::from(d.kind.as_str()),
             ])
-            .style(style)
-        })
-        .collect();
-
-    let table = Table::new(rows, widths)
-        .header(Row::new(vec![
-            "Device", "Mount", "FS", "Size", "Avail", "Use%", "Kind",
-        ]))
-        .block(
-            Block::bordered().title(format!(" Filesystems ({count}/{}) ", samples.disks.len(),)),
-        );
-    frame.render_widget(table, table_area);
+        },
+    ) {
+        return;
+    }
 
     render_sparkline(
         frame,
@@ -669,8 +712,6 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 }
 
 fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let has_query = !app.net_state.query.is_empty();
-
     let content_area = render_search_bar(frame, area, &app.net_state.query, app.net_state.focused);
 
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
@@ -680,88 +721,44 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     ])
     .areas(content_area);
 
-    let filtered: Vec<&NetInfo> = if has_query {
-        let q = app.net_state.query.to_lowercase();
-        samples
-            .interfaces
-            .iter()
-            .filter(|i| i.name.to_lowercase().contains(&q))
-            .collect()
-    } else {
-        samples.interfaces.iter().collect()
-    };
-
-    let count = filtered.len();
-    app.net_state.selection = app.net_state.selection.min(count.saturating_sub(1));
-
-    if count == 0 && !app.net_state.query.is_empty() {
-        let p = Paragraph::new("No matching interfaces")
-            .fg(Color::DarkGray)
-            .alignment(Alignment::Center);
-        frame.render_widget(p, table_area);
+    let query = app.net_state.query.clone();
+    if !render_filtered_table(
+        frame,
+        table_area,
+        &mut app.net_state,
+        &query,
+        &samples.interfaces,
+        |count, total| format!(" Network I/O ({count}/{total}) "),
+        "No matching interfaces",
+        &[
+            Constraint::Fill(1),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(8),
+            Constraint::Length(17),
+            Constraint::Fill(1),
+        ],
+        &["Interface", "RX", "TX", "State", "MAC", "IP"],
+        |i: &NetInfo, q| i.name.to_lowercase().contains(q),
+        |i: &NetInfo, _selected| {
+            Row::new(vec![
+                Cell::from(i.name.as_str()),
+                Cell::from(Span::styled(
+                    format_bytes(i.rx_bytes, false),
+                    Style::new().fg(Color::Yellow),
+                )),
+                Cell::from(Span::styled(
+                    format_bytes(i.tx_bytes, false),
+                    Style::new().fg(Color::Yellow),
+                )),
+                Cell::from(i.state.as_str()),
+                Cell::from(i.mac.as_str()),
+                Cell::from(i.ip.as_str()),
+            ])
+        },
+    ) {
         return;
     }
-
-    let (start, end) = clamp_scroll(
-        app.net_state.selection,
-        &mut app.net_state.scroll,
-        count,
-        table_area.height,
-    );
-    let visible = &filtered[start..end];
-    let rel_sel = app.net_state.selection.saturating_sub(start);
-
-    let widths: [Constraint; 6] = [
-        Constraint::Fill(1),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Length(17),
-        Constraint::Fill(1),
-    ];
-
-    let rows: Vec<Row> = visible
-        .iter()
-        .enumerate()
-        .map(|(i, iface)| {
-            let is_selected = i == rel_sel;
-            let style = if is_selected {
-                Style::new().bg(Color::DarkGray)
-            } else {
-                Style::default()
-            };
-            Row::new(vec![
-                Cell::from(iface.name.as_str()),
-                Cell::from(Span::styled(
-                    format_bytes(iface.rx_bytes, false),
-                    Style::new().fg(Color::Yellow),
-                )),
-                Cell::from(Span::styled(
-                    format_bytes(iface.tx_bytes, false),
-                    Style::new().fg(Color::Yellow),
-                )),
-                Cell::from(iface.state.as_str()),
-                Cell::from(iface.mac.as_str()),
-                Cell::from(iface.ip.as_str()),
-            ])
-            .style(style)
-        })
-        .collect();
-
-    let table = Table::new(rows, widths)
-        .header(Row::new(vec![
-            "Interface",
-            "RX",
-            "TX",
-            "State",
-            "MAC",
-            "IP",
-        ]))
-        .block(Block::bordered().title(format!(
-            " Network I/O ({count}/{}) ",
-            samples.interfaces.len(),
-        )));
-    frame.render_widget(table, table_area);
 
     render_sparkline(frame, rx_spark, " RX ", &app.net_rx_history, Color::Green);
     render_sparkline(frame, tx_spark, " TX ", &app.net_tx_history, Color::Yellow);
@@ -855,12 +852,8 @@ impl StatusBar {
             return "Help (? to close)".to_owned();
         }
         if app.kill_state == Some(KillState::Confirm) {
-            let pid = app.selected.as_ref().map(|s| s.pid).unwrap_or(0);
-            let name = app
-                .selected
-                .as_ref()
-                .map(|s| s.name.as_str())
-                .unwrap_or("?");
+            let pid = app.selected.as_ref().map_or(0, |s| s.pid);
+            let name = app.selected.as_ref().map_or("?", |s| s.name.as_str());
             return format!("Kill? PID {pid} ({name})");
         }
         if let Some(ref err) = app.error_msg {
@@ -986,23 +979,7 @@ fn render_horizontal_tabs(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mut filtered = filter_processes(&app.proc_state.query, &samples.processes);
-
-    filtered.sort_unstable_by(|a, b| {
-        let ord = match app.proc_sort_field {
-            ProcSortField::Name => a.name.cmp(&b.name),
-            ProcSortField::Pid => a.pid.cmp(&b.pid),
-            ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
-            ProcSortField::Memory => a.memory.cmp(&b.memory),
-            ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
-            ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
-            ProcSortField::Status => a.status.cmp(&b.status),
-        };
-        if app.proc_sort_asc {
-            ord
-        } else {
-            ord.reverse()
-        }
-    });
+    sort_processes(&mut filtered, app.proc_sort_field, app.proc_sort_asc);
 
     let count = filtered.len();
     app.proc_state.selection = app.proc_state.selection.min(count.saturating_sub(1));
@@ -1052,16 +1029,8 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
             } else {
                 Style::default()
             };
-            let mem_label = if p.memory >= 1_073_741_824 {
-                format!("{:.1}GiB", p.memory as f64 / 1_073_741_824.0)
-            } else {
-                format!("{:.0}MiB", p.memory as f64 / 1_048_576.0)
-            };
-            let virt_label = if p.virtual_memory >= 1_073_741_824 {
-                format!("{:.1}GiB", p.virtual_memory as f64 / 1_073_741_824.0)
-            } else {
-                format!("{:.0}MiB", p.virtual_memory as f64 / 1_048_576.0)
-            };
+            let mem_label = format_memory_label(p.memory);
+            let virt_label = format_memory_label(p.virtual_memory);
             Row::new(vec![
                 Cell::from(p.name.as_str()),
                 Cell::from(format!("{}", p.pid)),
@@ -1177,12 +1146,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     }
 
     if app.kill_state == Some(KillState::Confirm) {
-        let pid = app.selected.as_ref().map(|s| s.pid).unwrap_or(0);
-        let name = app
-            .selected
-            .as_ref()
-            .map(|s| s.name.as_str())
-            .unwrap_or("?");
+        let pid = app.selected.as_ref().map_or(0, |s| s.pid);
+        let name = app.selected.as_ref().map_or("?", |s| s.name.as_str());
         render_kill_confirm(frame, tab_area, pid, name);
     }
 }

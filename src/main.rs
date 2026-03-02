@@ -69,7 +69,7 @@ fn main() -> std::io::Result<()> {
         if !app.paused {
             let refresh_proc = app.active_tab == app::Tab::Proc;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                last_samples = samplers.sample(refresh_proc)
+                last_samples = samplers.sample(refresh_proc);
             }));
             match result {
                 Ok(()) => {
@@ -78,6 +78,7 @@ fn main() -> std::io::Result<()> {
                 }
                 Err(e) => {
                     samplers = samplers::Samplers::new();
+                    #[expect(clippy::option_if_let_else)]
                     let msg = if let Some(s) = e.downcast_ref::<&str>() {
                         s.to_string()
                     } else if let Some(s) = e.downcast_ref::<String>() {

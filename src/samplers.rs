@@ -410,14 +410,13 @@ impl Samplers {
         if sys_pid == Pid::from(std::process::id() as usize) {
             return KillResult::SelfTarget;
         }
-        match self.sys.process(sys_pid) {
-            Some(p) => match p.kill_with(signal) {
+        self.sys
+            .process(sys_pid)
+            .map_or(KillResult::NotFound, |p| match p.kill_with(signal) {
                 Some(true) => KillResult::Killed,
                 Some(false) => KillResult::NotFound,
                 None => KillResult::PermissionDenied,
-            },
-            None => KillResult::NotFound,
-        }
+            })
     }
 }
 
