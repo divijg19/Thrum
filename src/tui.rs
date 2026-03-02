@@ -6,7 +6,9 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{self, App, KillState, MAX_QUERY_LEN, ProcSortField, Tab, TabOrientation};
+use crate::app::{
+    self, App, KillState, MAX_QUERY_LEN, ProcSortField, SelectionState, Tab, TabOrientation,
+};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const MAX_HINTS: usize = 4;
@@ -512,28 +514,31 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
 }
 
 fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let has_query = !app.files_query.is_empty();
+    let has_query = !app.files_state.query.is_empty();
 
-    let content_area = render_search_bar(frame, area, &app.files_query, app.files_search_focused);
+    let content_area =
+        render_search_bar(frame, area, &app.files_state.query, app.files_state.focused);
 
     let [table_area, spark_area] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(content_area);
 
     let filtered: Vec<&DiskInfo> = if has_query {
-        let q = app.files_query.to_lowercase();
+        let q = app.files_state.query.to_lowercase();
         samples
             .disks
             .iter()
-            .filter(|d| d.mount.to_lowercase().contains(&q) || d.device.to_lowercase().contains(&q))
+            .filter(|d| {
+                d.mount_point.to_lowercase().contains(&q) || d.device.to_lowercase().contains(&q)
+            })
             .collect()
     } else {
         samples.disks.iter().collect()
     };
 
     let count = filtered.len();
-    app.files_selection = app.files_selection.min(count.saturating_sub(1));
+    app.files_state.selection = app.files_state.selection.min(count.saturating_sub(1));
 
-    if count == 0 && !app.files_query.is_empty() {
+    if count == 0 && !app.files_state.query.is_empty() {
         let p = Paragraph::new("No matching filesystems")
             .fg(Color::DarkGray)
             .alignment(Alignment::Center);
@@ -542,13 +547,13 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     }
 
     let (start, end) = clamp_scroll(
-        app.files_selection,
-        &mut app.files_scroll,
+        app.files_state.selection,
+        &mut app.files_state.scroll,
         count,
         table_area.height,
     );
     let visible = &filtered[start..end];
-    let rel_sel = app.files_selection.saturating_sub(start);
+    let rel_sel = app.files_state.selection.saturating_sub(start);
 
     let widths: [Constraint; 7] = [
         Constraint::Length(14),
@@ -572,7 +577,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
             };
             Row::new(vec![
                 Cell::from(d.device.as_str()),
-                Cell::from(d.mount.as_str()),
+                Cell::from(d.mount_point.as_str()),
                 Cell::from(d.fs.as_str()),
                 Cell::from(Span::styled(
                     format_bytes(d.total, true),
@@ -664,9 +669,9 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 }
 
 fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let has_query = !app.net_query.is_empty();
+    let has_query = !app.net_state.query.is_empty();
 
-    let content_area = render_search_bar(frame, area, &app.net_query, app.net_search_focused);
+    let content_area = render_search_bar(frame, area, &app.net_state.query, app.net_state.focused);
 
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
         Constraint::Fill(1),
@@ -676,7 +681,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     .areas(content_area);
 
     let filtered: Vec<&NetInfo> = if has_query {
-        let q = app.net_query.to_lowercase();
+        let q = app.net_state.query.to_lowercase();
         samples
             .interfaces
             .iter()
@@ -687,9 +692,9 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     };
 
     let count = filtered.len();
-    app.net_selection = app.net_selection.min(count.saturating_sub(1));
+    app.net_state.selection = app.net_state.selection.min(count.saturating_sub(1));
 
-    if count == 0 && !app.net_query.is_empty() {
+    if count == 0 && !app.net_state.query.is_empty() {
         let p = Paragraph::new("No matching interfaces")
             .fg(Color::DarkGray)
             .alignment(Alignment::Center);
@@ -698,13 +703,13 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     }
 
     let (start, end) = clamp_scroll(
-        app.net_selection,
-        &mut app.net_scroll,
+        app.net_state.selection,
+        &mut app.net_state.scroll,
         count,
         table_area.height,
     );
     let visible = &filtered[start..end];
-    let rel_sel = app.net_selection.saturating_sub(start);
+    let rel_sel = app.net_state.selection.saturating_sub(start);
 
     let widths: [Constraint; 6] = [
         Constraint::Fill(1),
@@ -850,8 +855,12 @@ impl StatusBar {
             return "Help (? to close)".to_owned();
         }
         if app.kill_state == Some(KillState::Confirm) {
-            let pid = app.selected_pid.unwrap_or(0);
-            let name = app.selected_name.as_deref().unwrap_or("?");
+            let pid = app.selected.as_ref().map(|s| s.pid).unwrap_or(0);
+            let name = app
+                .selected
+                .as_ref()
+                .map(|s| s.name.as_str())
+                .unwrap_or("?");
             return format!("Kill? PID {pid} ({name})");
         }
         if let Some(ref err) = app.error_msg {
@@ -905,15 +914,15 @@ impl StatusBar {
 
         if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
             let active_query = match app.active_tab {
-                Tab::Proc => &app.proc_query,
-                Tab::Net => &app.net_query,
-                Tab::Files => &app.files_query,
+                Tab::Proc => &app.proc_state.query,
+                Tab::Net => &app.net_state.query,
+                Tab::Files => &app.files_state.query,
                 _ => "",
             };
             let focused = match app.active_tab {
-                Tab::Proc => app.proc_search_focused,
-                Tab::Net => app.net_search_focused,
-                Tab::Files => app.files_search_focused,
+                Tab::Proc => app.proc_state.focused,
+                Tab::Net => app.net_state.focused,
+                Tab::Files => app.files_state.focused,
                 _ => false,
             };
             if !focused && active_query.is_empty() {
@@ -923,7 +932,7 @@ impl StatusBar {
             }
         }
 
-        if app.active_tab == Tab::Proc && app.selected_pid.is_some() {
+        if app.active_tab == Tab::Proc && app.selected.is_some() {
             hints.push("Delete Kill".to_owned());
             hints.push("Ctrl+K Kill!".to_owned());
         }
@@ -976,7 +985,7 @@ fn render_horizontal_tabs(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let mut filtered = filter_processes(&app.proc_query, &samples.processes);
+    let mut filtered = filter_processes(&app.proc_state.query, &samples.processes);
 
     filtered.sort_unstable_by(|a, b| {
         let ord = match app.proc_sort_field {
@@ -996,13 +1005,17 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     });
 
     let count = filtered.len();
-    app.proc_selection = app.proc_selection.min(count.saturating_sub(1));
-    app.selected_pid = filtered.get(app.proc_selection).map(|p| p.pid);
-    app.selected_name = filtered.get(app.proc_selection).map(|p| p.name.clone());
+    app.proc_state.selection = app.proc_state.selection.min(count.saturating_sub(1));
+    app.selected = filtered
+        .get(app.proc_state.selection)
+        .map(|p| SelectionState {
+            pid: p.pid,
+            name: p.name.clone(),
+        });
 
-    let table_area = render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
+    let table_area = render_search_bar(frame, area, &app.proc_state.query, app.proc_state.focused);
 
-    if count == 0 && !app.proc_query.is_empty() {
+    if count == 0 && !app.proc_state.query.is_empty() {
         let p = Paragraph::new("No matching processes")
             .fg(Color::DarkGray)
             .alignment(Alignment::Center);
@@ -1011,13 +1024,13 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     }
 
     let (start, end) = clamp_scroll(
-        app.proc_selection,
-        &mut app.proc_scroll,
+        app.proc_state.selection,
+        &mut app.proc_state.scroll,
         count,
         table_area.height,
     );
     let visible = &filtered[start..end];
-    let rel_sel = app.proc_selection.saturating_sub(start);
+    let rel_sel = app.proc_state.selection.saturating_sub(start);
 
     let widths: [Constraint; 7] = [
         Constraint::Fill(1),
@@ -1164,8 +1177,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     }
 
     if app.kill_state == Some(KillState::Confirm) {
-        let pid = app.selected_pid.unwrap_or(0);
-        let name = app.selected_name.as_deref().unwrap_or("?");
+        let pid = app.selected.as_ref().map(|s| s.pid).unwrap_or(0);
+        let name = app
+            .selected
+            .as_ref()
+            .map(|s| s.name.as_str())
+            .unwrap_or("?");
         render_kill_confirm(frame, tab_area, pid, name);
     }
 }
@@ -1354,7 +1371,7 @@ mod tests {
     fn status_bar_search_hidden_when_focused() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_search_focused = true;
+        app.proc_state.focused = true;
         let (_, hints) = StatusBar::build(&app).display();
         assert!(
             !hints.contains("/ Search"),
@@ -1366,8 +1383,10 @@ mod tests {
     fn status_bar_kill_hints_only_with_pid_and_proc() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         let (_, hints) = StatusBar::build(&app).display();
         assert!(hints.contains("Delete Kill"), "kill hint with PID on Proc");
         assert!(
@@ -1375,7 +1394,7 @@ mod tests {
             "Ctrl+K hint with PID on Proc"
         );
 
-        app.selected_pid = None;
+        app.selected = None;
         let (_, hints) = StatusBar::build(&app).display();
         assert!(!hints.contains("Delete Kill"), "no kill hint without PID");
     }
@@ -1410,8 +1429,10 @@ mod tests {
     fn status_bar_ctx_kill_confirm() {
         let mut app = App::new();
         app.kill_state = Some(KillState::Confirm);
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         let (ctx, _) = StatusBar::build(&app).display();
         assert_eq!(ctx, "Kill? PID 42 (bash)");
     }
@@ -1428,7 +1449,10 @@ mod tests {
     fn status_bar_hints_max_three() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         let (_, hints) = StatusBar::build(&app).display();
         let count = hints.matches(HINT_SEP).count() + 1;
         assert!(
@@ -1515,7 +1539,7 @@ mod tests {
     fn status_bar_esc_clear_when_filter_active() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_query = "fire".to_owned();
+        app.proc_state.query = "fire".to_owned();
         let (_, hints) = StatusBar::build(&app).display();
         assert!(
             hints.contains("Esc Clear"),
@@ -1527,7 +1551,7 @@ mod tests {
         );
 
         app.active_tab = Tab::Net;
-        app.net_query = "eth".to_owned();
+        app.net_state.query = "eth".to_owned();
         let (_, hints) = StatusBar::build(&app).display();
         assert!(hints.contains("Esc Clear"), "Esc Clear on Net with filter");
         assert!(
@@ -1540,8 +1564,10 @@ mod tests {
     fn status_bar_hints_keep_kill_with_tab_hint() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         let (_, hints) = StatusBar::build(&app).display();
         assert!(
             hints.contains("Delete Kill"),
@@ -1581,8 +1607,10 @@ mod tests {
         let mut app = App::new();
         app.error_msg = Some("stale data".to_owned());
         app.kill_state = Some(KillState::Confirm);
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         let (ctx, _) = StatusBar::build(&app).display();
         assert_eq!(ctx, "Kill? PID 42 (bash)", "kill confirm wins over error");
     }

@@ -45,7 +45,7 @@ impl KillResult {
 
 pub struct DiskInfo {
     pub device: String,
-    pub mount: String,
+    pub mount_point: String,
     pub fs: String,
     pub total: u64,
     pub available: u64,
@@ -87,27 +87,27 @@ pub struct TempInfo {
 
 #[derive(Default)]
 pub struct Samples {
+    pub sys_info: SysInfo,
     pub cpu_usage: f32,
+    pub cpus: Vec<CpuInfo>,
     pub mem_used: u64,
     pub mem_total: u64,
     pub mem_available: u64,
     pub mem_free: u64,
     pub swap_used: u64,
     pub swap_total: u64,
-    pub net_rx_rate: u64,
-    pub net_tx_rate: u64,
-    pub load_one: f64,
-    pub load_five: f64,
-    pub load_fifteen: f64,
-    pub processes: Vec<ProcessInfo>,
-    pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
-    pub cpus: Vec<CpuInfo>,
     pub disk_io: Vec<DiskIoInfo>,
     pub disk_read_rate: u64,
     pub disk_write_rate: u64,
+    pub interfaces: Vec<NetInfo>,
+    pub net_rx_rate: u64,
+    pub net_tx_rate: u64,
     pub temperatures: Vec<TempInfo>,
-    pub sys_info: SysInfo,
+    pub processes: Vec<ProcessInfo>,
+    pub load_one: f64,
+    pub load_five: f64,
+    pub load_fifteen: f64,
 }
 
 struct RatePairTracker<K: Eq + Hash> {
@@ -115,7 +115,7 @@ struct RatePairTracker<K: Eq + Hash> {
 }
 
 impl<K: Eq + Hash> RatePairTracker<K> {
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn new() -> Self {
         Self {
             prev: HashMap::new(),
@@ -232,27 +232,27 @@ impl Samplers {
         let load = System::load_average();
 
         Samples {
+            sys_info,
             cpu_usage: self.sys.global_cpu_usage(),
+            cpus,
             mem_used: self.sys.used_memory(),
             mem_total: self.sys.total_memory(),
             mem_available: self.sys.available_memory(),
             mem_free: self.sys.free_memory(),
             swap_used: self.sys.used_swap(),
             swap_total: self.sys.total_swap(),
-            net_rx_rate,
-            net_tx_rate,
-            load_one: load.one,
-            load_five: load.five,
-            load_fifteen: load.fifteen,
-            processes,
-            interfaces,
             disks,
-            cpus,
             disk_io,
             disk_read_rate,
             disk_write_rate,
+            interfaces,
+            net_rx_rate,
+            net_tx_rate,
             temperatures,
-            sys_info,
+            processes,
+            load_one: load.one,
+            load_five: load.five,
+            load_fifteen: load.fifteen,
         }
     }
 
@@ -317,7 +317,7 @@ impl Samplers {
                 let used = total.saturating_sub(available);
                 DiskInfo {
                     device: d.name().to_string_lossy().into_owned(),
-                    mount: d.mount_point().display().to_string(),
+                    mount_point: d.mount_point().display().to_string(),
                     fs: d.file_system().to_string_lossy().into_owned(),
                     total,
                     available,
@@ -330,7 +330,7 @@ impl Samplers {
                 }
             })
             .collect();
-        disks.sort_by(|a, b| a.mount.cmp(&b.mount));
+        disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
         disks
     }
 
@@ -356,6 +356,7 @@ impl Samplers {
             });
         }
 
+        disk_io.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
         let mount_points: HashSet<&str> = disk_io.iter().map(|d| d.mount_point.as_str()).collect();
         self.disk_io_rates
             .retain(|k| mount_points.contains(k.as_str()));
@@ -484,7 +485,7 @@ mod tests {
     fn disk_info_fields() {
         let info = DiskInfo {
             device: String::from("/dev/sda1"),
-            mount: String::from("/"),
+            mount_point: String::from("/"),
             fs: String::from("ext4"),
             total: 1_000_000_000_000,
             available: 500_000_000_000,
@@ -492,7 +493,7 @@ mod tests {
             kind: String::from("ssd"),
         };
         assert_eq!(info.device, "/dev/sda1");
-        assert_eq!(info.mount, "/");
+        assert_eq!(info.mount_point, "/");
         assert_eq!(info.fs, "ext4");
         assert_eq!(info.total, 1_000_000_000_000);
         assert_eq!(info.available, 500_000_000_000);
