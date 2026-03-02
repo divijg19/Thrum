@@ -177,20 +177,23 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        fn history() -> VecDeque<u64> {
+            VecDeque::with_capacity(WINDOW)
+        }
         Self {
             active_tab: Tab::Dash,
             sidebar_visible: true,
             tab_orientation: TabOrientation::Sidebar,
             tab_bar_visible: true,
-            cpu_history: VecDeque::with_capacity(WINDOW),
-            mem_history: VecDeque::with_capacity(WINDOW),
-            net_rx_history: VecDeque::with_capacity(WINDOW),
-            net_tx_history: VecDeque::with_capacity(WINDOW),
-            disk_read_history: VecDeque::with_capacity(WINDOW),
-            disk_write_history: VecDeque::with_capacity(WINDOW),
-            temp_history: VecDeque::with_capacity(WINDOW),
-            disk_usage_history: VecDeque::with_capacity(WINDOW),
-            swap_history: VecDeque::with_capacity(WINDOW),
+            cpu_history: history(),
+            mem_history: history(),
+            net_rx_history: history(),
+            net_tx_history: history(),
+            disk_read_history: history(),
+            disk_write_history: history(),
+            temp_history: history(),
+            disk_usage_history: history(),
+            swap_history: history(),
             proc_state: TabState::default(),
             net_state: TabState::default(),
             files_state: TabState::default(),
@@ -273,12 +276,11 @@ impl App {
                     self.active_tab = Tab::ALL[idx];
                 }
             }
-            KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
-                Tab::Proc => self.proc_state.focused = true,
-                Tab::Net => self.net_state.focused = true,
-                Tab::Files => self.files_state.focused = true,
-                _ => {}
-            },
+            KeyCode::Char('/') if key.modifiers.is_empty() => {
+                if let Some(state) = self.tab_state_mut() {
+                    state.focused = true;
+                }
+            }
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.tab_orientation = match self.tab_orientation {
                     TabOrientation::Sidebar => TabOrientation::Horizontal,
@@ -295,18 +297,11 @@ impl App {
                 }
             }
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
-                match self.active_tab {
-                    Tab::Proc => {
-                        Self::move_selection(key.code, &mut self.proc_state.selection);
+                if let Some(state) = self.tab_state_mut() {
+                    Self::move_selection(key.code, &mut state.selection);
+                    if self.active_tab == Tab::Proc {
                         self.selected = None;
                     }
-                    Tab::Net => {
-                        Self::move_selection(key.code, &mut self.net_state.selection);
-                    }
-                    Tab::Files => {
-                        Self::move_selection(key.code, &mut self.files_state.selection);
-                    }
-                    _ => {}
                 }
             }
             KeyCode::Right
@@ -342,11 +337,9 @@ impl App {
     fn handle_search_mode(&mut self, key: KeyEvent) -> bool {
         let is_ctrl_k =
             key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL);
-        let state = match self.active_tab {
-            Tab::Proc => &mut self.proc_state,
-            Tab::Net => &mut self.net_state,
-            Tab::Files => &mut self.files_state,
-            _ => return false,
+        let state = match self.tab_state_mut() {
+            Some(s) => s,
+            None => return false,
         };
         if state.focused {
             let consumed = handle_search_input(&mut state.query, &mut state.focused, key);
@@ -392,37 +385,17 @@ impl App {
     }
 
     fn apply_scroll(&mut self, up: bool) {
-        match self.active_tab {
-            Tab::Proc => {
-                if up {
-                    self.proc_state.selection =
-                        self.proc_state.selection.saturating_sub(self.scroll_step);
-                } else {
-                    self.proc_state.selection =
-                        self.proc_state.selection.saturating_add(self.scroll_step);
-                }
+        let step = self.scroll_step;
+        if let Some(state) = self.tab_state_mut() {
+            if up {
+                state.selection = state.selection.saturating_sub(step);
+            } else {
+                state.selection = state.selection.saturating_add(step);
+            }
+            if self.active_tab == Tab::Proc {
                 self.selected = None;
                 self.kill_state = None;
             }
-            Tab::Net => {
-                if up {
-                    self.net_state.selection =
-                        self.net_state.selection.saturating_sub(self.scroll_step);
-                } else {
-                    self.net_state.selection =
-                        self.net_state.selection.saturating_add(self.scroll_step);
-                }
-            }
-            Tab::Files => {
-                if up {
-                    self.files_state.selection =
-                        self.files_state.selection.saturating_sub(self.scroll_step);
-                } else {
-                    self.files_state.selection =
-                        self.files_state.selection.saturating_add(self.scroll_step);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -473,16 +446,11 @@ impl App {
         }
 
         if matches!(self.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
-            let state = match self.active_tab {
-                Tab::Proc => &mut self.proc_state,
-                Tab::Net => &mut self.net_state,
-                Tab::Files => &mut self.files_state,
-                _ => unreachable!(),
-            };
             let tab_y: u16 = match self.tab_orientation {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
                 _ => 1,
             };
+            let state = self.tab_state_mut().expect("checked Proc|Net|Files");
             let search_h: u16 = if !state.query.is_empty() || state.focused {
                 3
             } else {
@@ -514,8 +482,7 @@ impl App {
         }
     }
 
-    #[expect(clippy::missing_const_for_fn)]
-    fn move_selection(code: KeyCode, selection: &mut usize) -> bool {
+    const fn move_selection(code: KeyCode, selection: &mut usize) -> bool {
         match code {
             KeyCode::Up => *selection = selection.saturating_sub(1),
             KeyCode::Down => *selection = selection.saturating_add(1),
@@ -526,8 +493,7 @@ impl App {
         true
     }
 
-    #[expect(clippy::missing_const_for_fn)]
-    fn cycle_tab(&mut self, forward: bool) {
+    const fn cycle_tab(&mut self, forward: bool) {
         let idx = self.active_tab.index();
         let n = Tab::ALL.len();
         self.active_tab = Tab::ALL[(idx + if forward { 1 } else { n - 1 }) % n];
@@ -541,6 +507,14 @@ impl App {
         } else {
             false
         }
+    }
+
+    pub fn selected_pid(&self) -> u32 {
+        self.selected.as_ref().map_or(0, |s| s.pid)
+    }
+
+    pub fn selected_name(&self) -> &str {
+        self.selected.as_ref().map_or("?", |s| s.name.as_str())
     }
 
     pub fn push_history(&mut self, samples: &Samples) {
@@ -604,6 +578,24 @@ impl App {
 
         let swap_pct = pct(samples.swap_used, samples.swap_total) as u64;
         push_bounded(&mut self.swap_history, swap_pct, self.history_window);
+    }
+
+    pub fn tab_state(&self) -> Option<&TabState> {
+        match self.active_tab {
+            Tab::Proc => Some(&self.proc_state),
+            Tab::Net => Some(&self.net_state),
+            Tab::Files => Some(&self.files_state),
+            _ => None,
+        }
+    }
+
+    pub fn tab_state_mut(&mut self) -> Option<&mut TabState> {
+        match self.active_tab {
+            Tab::Proc => Some(&mut self.proc_state),
+            Tab::Net => Some(&mut self.net_state),
+            Tab::Files => Some(&mut self.files_state),
+            _ => None,
+        }
     }
 
     fn tab_from_horizontal_click(&self, col: u16) -> Option<usize> {
@@ -677,7 +669,78 @@ pub fn print_help() {
     eprintln!("  --help                Show this help");
 }
 
-#[expect(clippy::too_many_lines)]
+fn parse_flag_value<'a>(
+    args: &'a [String],
+    flag: &str,
+    i: &mut usize,
+) -> Result<&'a str, CliAction> {
+    *i += 1;
+    args.get(*i)
+        .ok_or_else(|| CliAction::Error(format!("{flag} requires a value")))
+        .map(|s| s.as_str())
+}
+
+fn parse_positive_int(args: &[String], flag: &str, i: &mut usize) -> Result<u64, CliAction> {
+    let val = parse_flag_value(args, flag, i)?;
+    val.parse()
+        .map_err(|_| CliAction::Error(format!("{flag} must be a positive integer")))
+        .and_then(|n| {
+            if n > 0 {
+                Ok(n)
+            } else {
+                Err(CliAction::Error(format!(
+                    "{flag} must be a positive integer"
+                )))
+            }
+        })
+}
+
+fn parse_tab_name(name: &str) -> Result<Tab, CliAction> {
+    match name.to_lowercase().as_str() {
+        "dash" => Ok(Tab::Dash),
+        "proc" => Ok(Tab::Proc),
+        "net" => Ok(Tab::Net),
+        "files" => Ok(Tab::Files),
+        "time" => Ok(Tab::Time),
+        "temp" => Ok(Tab::Temp),
+        "cores" => Ok(Tab::Cores),
+        "disk" => Ok(Tab::Disk),
+        "mem" => Ok(Tab::Mem),
+        _ => Err(CliAction::Error(format!("unknown tab '{name}'"))),
+    }
+}
+
+fn parse_tab_orientation(name: &str) -> Result<TabOrientation, CliAction> {
+    match name.to_ascii_lowercase().as_str() {
+        "sidebar" => Ok(TabOrientation::Sidebar),
+        "horizontal" => Ok(TabOrientation::Horizontal),
+        "horizontal_footer" => Ok(TabOrientation::HorizontalFooter),
+        _ => Err(CliAction::Error(
+            "--tabs must be 'sidebar', 'horizontal', or 'horizontal_footer'".to_owned(),
+        )),
+    }
+}
+
+fn load_config(config_path: Option<&str>) -> Result<Config, CliAction> {
+    if let Some(path) = config_path {
+        let p = Path::new(path);
+        if !p.exists() {
+            return Err(CliAction::Error(format!("config file '{path}' not found")));
+        }
+        read_config_file(p).map_err(CliAction::Error)
+    } else if let Some(p) = default_config_path() {
+        match read_config_file(&p) {
+            Ok(cfg) => Ok(cfg),
+            Err(e) => Ok(Config {
+                config_warning: Some(e),
+                ..Config::default()
+            }),
+        }
+    } else {
+        Ok(Config::default())
+    }
+}
+
 pub fn parse_args(args: &[String]) -> CliAction {
     for arg in args {
         match arg.as_str() {
@@ -697,94 +760,45 @@ pub fn parse_args(args: &[String]) -> CliAction {
             }
         });
 
-    let mut cfg = if let Some(path) = config_path {
-        let p = Path::new(path);
-        if !p.exists() {
-            return CliAction::Error(format!("config file '{path}' not found"));
-        }
-        match read_config_file(p) {
-            Ok(c) => c,
-            Err(e) => return CliAction::Error(e),
-        }
-    } else if let Some(p) = default_config_path() {
-        match read_config_file(&p) {
-            Ok(cfg) => cfg,
-            Err(e) => Config {
-                config_warning: Some(e),
-                ..Config::default()
-            },
-        }
-    } else {
-        Config::default()
+    let mut cfg = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-r" | "--refresh" => {
-                i += 1;
-                cfg.refresh_ms = match args.get(i) {
-                    Some(val) => match val.parse() {
-                        Ok(n) if n > 0 => n,
-                        _ => {
-                            return CliAction::Error(
-                                "--refresh must be a positive integer".to_owned(),
-                            );
-                        }
-                    },
-                    None => return CliAction::Error("--refresh requires a value".to_owned()),
+                cfg.refresh_ms = match parse_positive_int(args, "--refresh", &mut i) {
+                    Ok(n) => n,
+                    Err(e) => return e,
                 };
             }
             "-t" | "--tab" => {
-                i += 1;
-                match args.get(i) {
-                    Some(name) => {
-                        cfg.default_tab = match name.to_lowercase().as_str() {
-                            "dash" => Tab::Dash,
-                            "proc" => Tab::Proc,
-                            "net" => Tab::Net,
-                            "files" => Tab::Files,
-                            "time" => Tab::Time,
-                            "temp" => Tab::Temp,
-                            "cores" => Tab::Cores,
-                            "disk" => Tab::Disk,
-                            "mem" => Tab::Mem,
-                            _ => return CliAction::Error(format!("unknown tab '{name}'")),
-                        };
-                    }
-                    None => return CliAction::Error("--tab requires a value".to_owned()),
-                }
+                let name = match parse_flag_value(args, "--tab", &mut i) {
+                    Ok(n) => n,
+                    Err(e) => return e,
+                };
+                cfg.default_tab = match parse_tab_name(name) {
+                    Ok(t) => t,
+                    Err(e) => return e,
+                };
             }
             "-s" | "--no-sidebar" => cfg.hide_sidebar = true,
             "--tabs" => {
-                i += 1;
-                match args.get(i) {
-                    Some(val) => {
-                        cfg.tab_orientation = match val.to_ascii_lowercase().as_str() {
-                            "sidebar" => TabOrientation::Sidebar,
-                            "horizontal" => TabOrientation::Horizontal,
-                            "horizontal_footer" => TabOrientation::HorizontalFooter,
-                            _ => return CliAction::Error(
-                                "--tabs must be 'sidebar', 'horizontal', or 'horizontal_footer'"
-                                    .to_owned(),
-                            ),
-                        };
-                    }
-                    None => return CliAction::Error("--tabs requires a value".to_owned()),
-                }
+                let val = match parse_flag_value(args, "--tabs", &mut i) {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+                cfg.tab_orientation = match parse_tab_orientation(val) {
+                    Ok(o) => o,
+                    Err(e) => return e,
+                };
             }
             "--scroll-step" => {
-                i += 1;
-                cfg.scroll_step = match args.get(i) {
-                    Some(val) => match val.parse() {
-                        Ok(n) if n > 0 => n,
-                        _ => {
-                            return CliAction::Error(
-                                "--scroll-step must be a positive integer".to_owned(),
-                            );
-                        }
-                    },
-                    None => return CliAction::Error("--scroll-step requires a value".to_owned()),
+                cfg.scroll_step = match parse_positive_int(args, "--scroll-step", &mut i) {
+                    Ok(n) => n as usize,
+                    Err(e) => return e,
                 };
             }
             "-c" | "--config" => {
@@ -804,7 +818,7 @@ pub fn parse_args(args: &[String]) -> CliAction {
     CliAction::Config(cfg)
 }
 
-pub fn pct(part: u64, total: u64) -> f64 {
+pub const fn pct(part: u64, total: u64) -> f64 {
     if total > 0 {
         part as f64 / total as f64 * 100.0
     } else {
