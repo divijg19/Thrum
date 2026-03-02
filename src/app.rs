@@ -126,6 +126,10 @@ impl Tab {
             Self::Mem => "Mem",
         }
     }
+
+    pub const fn has_searchable_state(self) -> bool {
+        matches!(self, Self::Proc | Self::Net | Self::Files)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -263,6 +267,10 @@ impl App {
             return;
         }
 
+        self.dispatch_key(key);
+    }
+
+    fn dispatch_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
             KeyCode::Char('?') if key.modifiers.is_empty() => {
@@ -282,27 +290,13 @@ impl App {
                 }
             }
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.tab_orientation = match self.tab_orientation {
-                    TabOrientation::Sidebar => TabOrientation::Horizontal,
-                    TabOrientation::Horizontal => TabOrientation::HorizontalFooter,
-                    TabOrientation::HorizontalFooter => TabOrientation::Sidebar,
-                };
+                self.cycle_orientation();
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                match self.tab_orientation {
-                    TabOrientation::Sidebar => self.sidebar_visible = !self.sidebar_visible,
-                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
-                        self.tab_bar_visible = !self.tab_bar_visible;
-                    }
-                }
+                self.toggle_sidebar_or_bar();
             }
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
-                if let Some(state) = self.tab_state_mut() {
-                    Self::move_selection(key.code, &mut state.selection);
-                    if self.active_tab == Tab::Proc {
-                        self.selected = None;
-                    }
-                }
+                self.handle_nav_key(key.code);
             }
             KeyCode::Right
                 if matches!(
@@ -334,12 +328,35 @@ impl App {
         }
     }
 
+    const fn cycle_orientation(&mut self) {
+        self.tab_orientation = match self.tab_orientation {
+            TabOrientation::Sidebar => TabOrientation::Horizontal,
+            TabOrientation::Horizontal => TabOrientation::HorizontalFooter,
+            TabOrientation::HorizontalFooter => TabOrientation::Sidebar,
+        };
+    }
+
+    const fn toggle_sidebar_or_bar(&mut self) {
+        match self.tab_orientation {
+            TabOrientation::Sidebar => self.sidebar_visible = !self.sidebar_visible,
+            TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
+                self.tab_bar_visible = !self.tab_bar_visible;
+            }
+        }
+    }
+
+    fn handle_nav_key(&mut self, code: KeyCode) {
+        if let Some(state) = self.tab_state_mut() {
+            Self::move_selection(code, &mut state.selection);
+            self.clear_selection_and_kill();
+        }
+    }
+
     fn handle_search_mode(&mut self, key: KeyEvent) -> bool {
         let is_ctrl_k =
             key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL);
-        let state = match self.tab_state_mut() {
-            Some(s) => s,
-            None => return false,
+        let Some(state) = self.tab_state_mut() else {
+            return false;
         };
         if state.focused {
             let consumed = handle_search_input(&mut state.query, &mut state.focused, key);
@@ -392,10 +409,7 @@ impl App {
             } else {
                 state.selection = state.selection.saturating_add(step);
             }
-            if self.active_tab == Tab::Proc {
-                self.selected = None;
-                self.kill_state = None;
-            }
+            self.clear_selection_and_kill();
         }
     }
 
@@ -445,7 +459,7 @@ impl App {
             return;
         }
 
-        if matches!(self.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+        if self.active_tab.has_searchable_state() {
             let tab_y: u16 = match self.tab_orientation {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
                 _ => 1,
@@ -461,10 +475,7 @@ impl App {
                 state.focused = false;
                 let offset = (row - data_start) as usize;
                 state.selection = state.scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
-                if self.active_tab == Tab::Proc {
-                    self.selected = None;
-                    self.kill_state = None;
-                }
+                self.clear_selection_and_kill();
             }
         }
     }
@@ -479,6 +490,13 @@ impl App {
                 row == self.term_height.saturating_sub(3)
             }
             _ => false,
+        }
+    }
+
+    fn clear_selection_and_kill(&mut self) {
+        if self.active_tab == Tab::Proc {
+            self.selected = None;
+            self.kill_state = None;
         }
     }
 
@@ -580,7 +598,7 @@ impl App {
         push_bounded(&mut self.swap_history, swap_pct, self.history_window);
     }
 
-    pub fn tab_state(&self) -> Option<&TabState> {
+    pub const fn tab_state(&self) -> Option<&TabState> {
         match self.active_tab {
             Tab::Proc => Some(&self.proc_state),
             Tab::Net => Some(&self.net_state),
@@ -589,7 +607,7 @@ impl App {
         }
     }
 
-    pub fn tab_state_mut(&mut self) -> Option<&mut TabState> {
+    pub const fn tab_state_mut(&mut self) -> Option<&mut TabState> {
         match self.active_tab {
             Tab::Proc => Some(&mut self.proc_state),
             Tab::Net => Some(&mut self.net_state),
@@ -677,7 +695,7 @@ fn parse_flag_value<'a>(
     *i += 1;
     args.get(*i)
         .ok_or_else(|| CliAction::Error(format!("{flag} requires a value")))
-        .map(|s| s.as_str())
+        .map(String::as_str)
 }
 
 fn parse_positive_int(args: &[String], flag: &str, i: &mut usize) -> Result<u64, CliAction> {

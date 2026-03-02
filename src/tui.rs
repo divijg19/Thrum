@@ -20,6 +20,7 @@ const STYLE_YELLOW: Style = Style::new().fg(Color::Yellow);
 const STYLE_MAGENTA: Style = Style::new().fg(Color::Magenta);
 const STYLE_DARK_GRAY: Style = Style::new().fg(Color::DarkGray);
 const STYLE_SELECTED: Style = Style::new().bg(Color::DarkGray);
+const STYLE_RED: Style = Style::new().fg(Color::Red);
 
 fn format_memory(gib: f64, pct: f64) -> String {
     format!("{gib:.1} GiB  {pct:.1}%")
@@ -409,55 +410,46 @@ fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) 
     remaining
 }
 
-fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Hostname    ", Style::new().bold()),
-            Span::raw(&samples.sys_info.hostname),
-        ]),
-        Line::from(vec![
-            Span::styled("OS          ", Style::new().bold()),
-            Span::raw(&samples.sys_info.os),
-        ]),
-        Line::from(vec![
-            Span::styled("Kernel      ", Style::new().bold()),
-            Span::raw(&samples.sys_info.kernel),
-        ]),
-        Line::from(vec![
-            Span::styled("Arch        ", Style::new().bold()),
-            Span::raw(&samples.sys_info.arch),
-        ]),
-        Line::from(vec![
-            Span::styled("Uptime      ", Style::new().bold()),
-            Span::raw(format_uptime(samples.sys_info.uptime)),
-        ]),
-        Line::from(vec![
-            Span::styled("CPUs        ", Style::new().bold()),
-            Span::raw(format!("{}", samples.sys_info.cpu_count)),
-        ]),
-        Line::from(vec![
-            Span::styled("Distro      ", Style::new().bold()),
-            Span::raw(&samples.sys_info.distro),
-        ]),
-        Line::from(vec![
-            Span::styled("Boot        ", Style::new().bold()),
-            Span::raw(format_timestamp(samples.sys_info.boot_time)),
-        ]),
-        Line::from(vec![
-            Span::styled("Phys Cores  ", Style::new().bold()),
-            Span::raw(format!("{}", samples.sys_info.physical_cores)),
-        ]),
-    ];
-
+fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, String)], height: u16) {
     let [_, info, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(9),
+        Constraint::Length(height),
         Constraint::Fill(1),
     ])
     .areas(area);
 
-    let p = Paragraph::new(lines).fg(Color::Gray);
-    frame.render_widget(&p, info);
+    let lines: Vec<Line> = items
+        .iter()
+        .map(|(label, value)| {
+            Line::from(vec![
+                Span::styled(*label, Style::new().bold()),
+                Span::raw(value),
+            ])
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines).fg(Color::Gray), info);
+}
+
+fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
+    render_info_block(
+        frame,
+        area,
+        &[
+            ("Hostname    ", samples.sys_info.hostname.clone()),
+            ("OS          ", samples.sys_info.os.clone()),
+            ("Kernel      ", samples.sys_info.kernel.clone()),
+            ("Arch        ", samples.sys_info.arch.clone()),
+            ("Uptime      ", format_uptime(samples.sys_info.uptime)),
+            ("CPUs        ", format!("{}", samples.sys_info.cpu_count)),
+            ("Distro      ", samples.sys_info.distro.clone()),
+            ("Boot        ", format_timestamp(samples.sys_info.boot_time)),
+            (
+                "Phys Cores  ",
+                format!("{}", samples.sys_info.physical_cores),
+            ),
+        ],
+        9,
+    );
 }
 
 fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -478,39 +470,23 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let swap_used_pct = app::pct(samples.swap_used, samples.swap_total);
     let swap_free_pct = app::pct(swap_free, samples.swap_total);
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Memory      ", Style::new().bold()),
-            Span::raw(format!("{mem_total_gb:.1} GiB")),
-        ]),
-        Line::from(vec![
-            Span::styled("Used        ", Style::new().bold()),
-            Span::raw(format_memory(mem_used_gb, mem_used_pct)),
-        ]),
-        Line::from(vec![
-            Span::styled("Available   ", Style::new().bold()),
-            Span::raw(format_memory(mem_avail_gb, mem_avail_pct)),
-        ]),
-        Line::from(vec![
-            Span::styled("Free        ", Style::new().bold()),
-            Span::raw(format_memory(mem_free_gb, mem_free_pct)),
-        ]),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled("Swap        ", Style::new().bold()),
-            Span::raw(format!("{swap_total_gb:.1} GiB")),
-        ]),
-        Line::from(vec![
-            Span::styled("Used        ", Style::new().bold()),
-            Span::raw(format_memory(swap_used_gb, swap_used_pct)),
-        ]),
-        Line::from(vec![
-            Span::styled("Free        ", Style::new().bold()),
-            Span::raw(format_memory(swap_free_gb, swap_free_pct)),
-        ]),
-    ];
+    render_info_block(
+        frame,
+        area,
+        &[
+            ("Memory      ", format!("{mem_total_gb:.1} GiB")),
+            ("Used        ", format_memory(mem_used_gb, mem_used_pct)),
+            ("Available   ", format_memory(mem_avail_gb, mem_avail_pct)),
+            ("Free        ", format_memory(mem_free_gb, mem_free_pct)),
+            ("", String::new()),
+            ("Swap        ", format!("{swap_total_gb:.1} GiB")),
+            ("Used        ", format_memory(swap_used_gb, swap_used_pct)),
+            ("Free        ", format_memory(swap_free_gb, swap_free_pct)),
+        ],
+        8,
+    );
 
-    let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
+    let [_, _, mem_spark, swap_spark, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(8),
         Constraint::Length(3),
@@ -518,9 +494,6 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         Constraint::Fill(1),
     ])
     .areas(area);
-
-    let p = Paragraph::new(lines).fg(Color::Gray);
-    frame.render_widget(&p, info);
 
     render_sparkline(
         frame,
@@ -552,10 +525,7 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .map(|t| {
             Row::new(vec![
                 Cell::from(t.label.as_str()),
-                Cell::from(Span::styled(
-                    format_temp(t.temperature),
-                    Style::new().fg(Color::Red),
-                )),
+                Cell::from(Span::styled(format_temp(t.temperature), STYLE_RED)),
                 Cell::from(format_temp(t.max)),
                 Cell::from(format_temp(t.critical)),
             ])
@@ -894,7 +864,7 @@ impl StatusBar {
             }
         }
 
-        if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+        if app.active_tab.has_searchable_state() {
             let active_query = app.tab_state().map_or("", |s| s.query.as_str());
             let focused = app.tab_state().is_some_and(|s| s.focused);
             if !focused && active_query.is_empty() {
@@ -910,9 +880,10 @@ impl StatusBar {
         }
 
         if hints.len() < MAX_HINTS {
-            match app.active_tab {
-                Tab::Proc => hints.push("\u{2191}\u{2193} Select".to_owned()),
-                _ => hints.push("1-9 Tab".to_owned()),
+            if app.active_tab == Tab::Proc {
+                hints.push("\u{2191}\u{2193} Select".to_owned());
+            } else {
+                hints.push("1-9 Tab".to_owned());
             }
         }
 
@@ -1097,6 +1068,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         Tab::Mem => render_mem(frame, tab_area, app, samples),
     }
 
+    render_status_and_overlays(frame, tab_area, status_area, app);
+}
+
+fn render_status_and_overlays(frame: &mut Frame, tab_area: Rect, status_area: Rect, app: &mut App) {
     let (ctx, hints) = StatusBar::build(app).display();
     let [ctx_area, hints_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Min(20)]).areas(status_area);
