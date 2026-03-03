@@ -437,6 +437,16 @@ impl App {
     }
 
     fn handle_click(&mut self, col: u16, row: u16) {
+        if self.handle_sidebar_click(col, row) {
+            return;
+        }
+        if self.handle_tab_bar_click(col, row) {
+            return;
+        }
+        self.handle_searchable_data_click(row);
+    }
+
+    fn handle_sidebar_click(&mut self, col: u16, row: u16) -> bool {
         if self.tab_orientation == TabOrientation::Sidebar
             && self.sidebar_visible
             && (1..=9).contains(&col)
@@ -446,10 +456,13 @@ impl App {
             if idx < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx];
                 self.kill_state = None;
-                return;
+                return true;
             }
         }
+        false
+    }
 
+    fn handle_tab_bar_click(&mut self, col: u16, row: u16) -> bool {
         if self.tab_bar_visible
             && match self.tab_orientation {
                 TabOrientation::Horizontal => row == 1,
@@ -460,9 +473,12 @@ impl App {
         {
             self.active_tab = Tab::ALL[idx];
             self.kill_state = None;
-            return;
+            return true;
         }
+        false
+    }
 
+    fn handle_searchable_data_click(&mut self, row: u16) {
         if self.active_tab.has_searchable_state() {
             let tab_y: u16 = match self.tab_orientation {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
