@@ -71,6 +71,12 @@ pub enum TabOrientation {
     HorizontalFooter,
 }
 
+impl TabOrientation {
+    pub const fn is_horizontal(self) -> bool {
+        matches!(self, Self::Horizontal | Self::HorizontalFooter)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tab {
@@ -302,20 +308,10 @@ impl App {
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
                 self.handle_nav_key(key.code);
             }
-            KeyCode::Right
-                if matches!(
-                    self.tab_orientation,
-                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter
-                ) =>
-            {
+            KeyCode::Right if self.tab_orientation.is_horizontal() => {
                 self.cycle_tab(true);
             }
-            KeyCode::Left
-                if matches!(
-                    self.tab_orientation,
-                    TabOrientation::Horizontal | TabOrientation::HorizontalFooter
-                ) =>
-            {
+            KeyCode::Left if self.tab_orientation.is_horizontal() => {
                 self.cycle_tab(false);
             }
             KeyCode::Delete if self.active_tab.is_proc() && self.selected.is_some() => {
@@ -341,11 +337,10 @@ impl App {
     }
 
     const fn toggle_sidebar_or_bar(&mut self) {
-        match self.tab_orientation {
-            TabOrientation::Sidebar => self.sidebar_visible = !self.sidebar_visible,
-            TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
-                self.tab_bar_visible = !self.tab_bar_visible;
-            }
+        if self.tab_orientation.is_horizontal() {
+            self.tab_bar_visible = !self.tab_bar_visible;
+        } else {
+            self.sidebar_visible = !self.sidebar_visible;
         }
     }
 

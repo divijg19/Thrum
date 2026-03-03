@@ -14,6 +14,11 @@ use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const MAX_HINTS: usize = 4;
 
+const SPARK_CPU_TITLE: &str = " CPU ";
+const SPARK_CPU_COLOR: Color = Color::Green;
+const SPARK_MEM_TITLE: &str = " Memory ";
+const SPARK_MEM_COLOR: Color = Color::Cyan;
+
 const STYLE_GREEN: Style = Style::new().fg(Color::Green);
 const STYLE_CYAN: Style = Style::new().fg(Color::Cyan);
 const STYLE_YELLOW: Style = Style::new().fg(Color::Yellow);
@@ -99,8 +104,20 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     .areas(area);
 
     render_dash_gauges(frame, gauges, samples);
-    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
-    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
+    render_sparkline(
+        frame,
+        cpu_spark,
+        SPARK_CPU_TITLE,
+        &app.cpu_history,
+        SPARK_CPU_COLOR,
+    );
+    render_sparkline(
+        frame,
+        mem_spark,
+        SPARK_MEM_TITLE,
+        &app.mem_history,
+        SPARK_MEM_COLOR,
+    );
     render_dash_load(frame, load, samples);
     render_dash_summary(frame, summary, samples);
 }
@@ -421,10 +438,10 @@ fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) 
     remaining
 }
 
-fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, String)], height: u16) {
+fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, String)]) {
     let [_, info, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(height),
+        Constraint::Length(items.len() as u16),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -459,7 +476,6 @@ fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples)
                 format!("{}", samples.sys_info.physical_cores),
             ),
         ],
-        9,
     );
 }
 
@@ -494,7 +510,6 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
             ("Used        ", format_memory(swap_used_gb, swap_used_pct)),
             ("Free        ", format_memory(swap_free_gb, swap_free_pct)),
         ],
-        8,
     );
 
     let [_, _, mem_spark, swap_spark, _] = Layout::vertical([
@@ -861,15 +876,12 @@ impl StatusBar {
 
         let mut hints: Vec<String> = Vec::with_capacity(3);
 
-        match app.tab_orientation {
-            TabOrientation::Sidebar => {
-                let label = if app.sidebar_visible { "Hide" } else { "Show" };
-                hints.push(format!("Ctrl+S {label} Sidebar"));
-            }
-            TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
-                let label = if app.tab_bar_visible { "Hide" } else { "Show" };
-                hints.push(format!("Ctrl+S {label} Tab Bar"));
-            }
+        if app.tab_orientation.is_horizontal() {
+            let label = if app.tab_bar_visible { "Hide" } else { "Show" };
+            hints.push(format!("Ctrl+S {label} Tab Bar"));
+        } else {
+            let label = if app.sidebar_visible { "Hide" } else { "Show" };
+            hints.push(format!("Ctrl+S {label} Sidebar"));
         }
 
         if app.active_tab.has_searchable_state() {
@@ -1020,8 +1032,20 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
         )));
     frame.render_widget(table, table_area);
 
-    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
-    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
+    render_sparkline(
+        frame,
+        cpu_spark,
+        SPARK_CPU_TITLE,
+        &app.cpu_history,
+        SPARK_CPU_COLOR,
+    );
+    render_sparkline(
+        frame,
+        mem_spark,
+        SPARK_MEM_TITLE,
+        &app.mem_history,
+        SPARK_MEM_COLOR,
+    );
 }
 
 type TabRenderer = fn(&mut Frame, Rect, &mut App, &Samples);
@@ -1039,14 +1063,10 @@ const RENDERERS: [TabRenderer; 9] = [
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
-    let block = match app.tab_orientation {
-        TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
-            Block::bordered().title(" Thrum ")
-        }
-        TabOrientation::Sidebar if app.sidebar_visible => Block::bordered().title(" Thrum "),
-        TabOrientation::Sidebar => {
-            Block::bordered().title(format!(" Thrum | {} ", app.active_tab.label()))
-        }
+    let block = if app.tab_orientation.is_horizontal() || app.sidebar_visible {
+        Block::bordered().title(" Thrum ")
+    } else {
+        Block::bordered().title(format!(" Thrum | {} ", app.active_tab.label()))
     };
     frame.render_widget(&block, frame.area());
     let inner = block.inner(frame.area());
