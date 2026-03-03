@@ -9,11 +9,18 @@ use sysinfo::Signal;
 
 use crate::samplers::Samples;
 
+/// Number of items per page in scrollable lists.
 pub const PAGE_SIZE: usize = 10;
+/// Number of historical samples retained for sparkline rendering.
 pub const WINDOW: usize = 60;
+/// Maximum length of the search/filter query string.
 pub const MAX_QUERY_LEN: usize = 256;
+/// Maximum pixel offset considered a valid mouse click on a table row.
 pub const MAX_CLICK_OFFSET: usize = 1000;
+/// Width of the sidebar in columns, derived from the number of tab labels.
+pub const SIDEBAR_WIDTH: u16 = Tab::ALL.len() as u16;
 
+/// Mapping of single-character hotkeys to human-readable signal names and OS signals.
 pub const KILL_SIGNAL_MAP: &[(char, &str, Signal)] = &[
     ('1', "SIGTERM", Signal::Term),
     ('2', "SIGKILL", Signal::Kill),
@@ -23,6 +30,7 @@ pub const KILL_SIGNAL_MAP: &[(char, &str, Signal)] = &[
     ('6', "SIGCONT", Signal::Continue),
 ];
 
+/// Action to take after parsing command-line arguments.
 pub enum CliAction {
     Help,
     Version,
@@ -32,6 +40,7 @@ pub enum CliAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Field by which the process table can be sorted.
 pub enum ProcSortField {
     Name,
     Pid,
@@ -56,6 +65,7 @@ impl std::fmt::Display for ProcSortField {
     }
 }
 
+/// State machine for the kill-flow: confirming, then dispatching a signal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KillState {
     Confirm,
@@ -64,6 +74,7 @@ pub enum KillState {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Placement of the tab selector: sidebar, top bar, or footer bar.
 pub enum TabOrientation {
     #[default]
     Sidebar,
@@ -72,6 +83,7 @@ pub enum TabOrientation {
 }
 
 impl TabOrientation {
+    /// Returns `true` when the tab bar is rendered horizontally (top or footer).
     pub const fn is_horizontal(self) -> bool {
         matches!(self, Self::Horizontal | Self::HorizontalFooter)
     }
@@ -79,6 +91,7 @@ impl TabOrientation {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// A dashboard tab, each corresponding to a system-monitoring view.
 pub enum Tab {
     #[default]
     Dash,
@@ -93,6 +106,7 @@ pub enum Tab {
 }
 
 impl Tab {
+    /// All available tabs in display order.
     pub const ALL: [Self; 9] = [
         Self::Dash,
         Self::Proc,
@@ -105,6 +119,7 @@ impl Tab {
         Self::Mem,
     ];
 
+    /// Returns the zero-based index of this tab within [`ALL`](Self::ALL).
     pub const fn index(self) -> usize {
         match self {
             Self::Dash => 0,
@@ -119,6 +134,7 @@ impl Tab {
         }
     }
 
+    /// Returns the display label for this tab.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Dash => "Dash",
@@ -133,15 +149,18 @@ impl Tab {
         }
     }
 
+    /// Returns `true` when this is the process tab.
     pub const fn is_proc(self) -> bool {
         matches!(self, Self::Proc)
     }
 
+    /// Returns `true` when the tab supports search/filter state (Proc, Net, Files).
     pub const fn has_searchable_state(self) -> bool {
         matches!(self, Self::Proc | Self::Net | Self::Files)
     }
 }
 
+/// Search/filter state shared by tabs with a search bar (Proc, Net, Files).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TabState {
     pub query: String,
@@ -150,6 +169,7 @@ pub struct TabState {
     pub selection: usize,
 }
 
+/// Holds the PID and name of the currently selected process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionState {
     pub pid: u32,
@@ -157,6 +177,7 @@ pub struct SelectionState {
 }
 
 #[expect(clippy::struct_excessive_bools)]
+/// Central application state combining UI state, history buffers, and configuration.
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -190,10 +211,12 @@ pub struct App {
 }
 
 impl App {
+    /// Creates a new `App` with default state.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Applies a [`Config`] to the app state (tab, orientation, sort defaults, etc.).
     pub fn apply_config(&mut self, cfg: &Config) {
         self.active_tab = cfg.default_tab;
         self.sidebar_visible = !cfg.hide_sidebar;
@@ -214,6 +237,7 @@ impl App {
         ('s', ProcSortField::Status, true),
     ];
 
+    /// Dispatches a keyboard event to the appropriate handler.
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.should_quit = true;
@@ -379,6 +403,7 @@ impl App {
         }
     }
 
+    /// Dispatches a mouse event: clicks, scrolls on tab bar or data areas.
     pub fn handle_mouse(&mut self, col: u16, row: u16, kind: MouseEventKind) {
         match kind {
             MouseEventKind::Down(MouseButton::Left) => self.handle_click(col, row),
@@ -411,7 +436,7 @@ impl App {
     fn handle_sidebar_click(&mut self, col: u16, row: u16) -> bool {
         if self.tab_orientation == TabOrientation::Sidebar
             && self.sidebar_visible
-            && (1..=9).contains(&col)
+            && (1..=SIDEBAR_WIDTH).contains(&col)
             && row >= 1
         {
             let idx = (row - 1) as usize;
@@ -467,7 +492,9 @@ impl App {
     fn is_on_tab_bar(&self, col: u16, row: u16) -> bool {
         match self.tab_orientation {
             TabOrientation::Sidebar if self.sidebar_visible => {
-                (1..=9).contains(&col) && row >= 1 && ((row - 1) as usize) < Tab::ALL.len()
+                (1..=SIDEBAR_WIDTH).contains(&col)
+                    && row >= 1
+                    && ((row - 1) as usize) < Tab::ALL.len()
             }
             TabOrientation::Horizontal if self.tab_bar_visible => row == 1,
             TabOrientation::HorizontalFooter if self.tab_bar_visible => {
@@ -501,6 +528,7 @@ impl App {
         self.active_tab = Tab::ALL[(idx + if forward { 1 } else { n - 1 }) % n];
     }
 
+    /// Refreshes stored terminal dimensions; returns `false` on failure.
     pub fn refresh_term_size(&mut self) -> bool {
         if let Ok((w, h)) = crossterm::terminal::size() {
             self.term_width = w;
@@ -511,14 +539,17 @@ impl App {
         }
     }
 
+    /// Returns the PID of the currently selected process, or `0`.
     pub fn selected_pid(&self) -> u32 {
         self.selected.as_ref().map_or(0, |s| s.pid)
     }
 
+    /// Returns the name of the currently selected process, or `"?"`.
     pub fn selected_name(&self) -> &str {
         self.selected.as_ref().map_or("?", |s| s.name.as_str())
     }
 
+    /// Pushes a new [`Samples`] snapshot into all history buffers (CPU, memory, net, etc.).
     pub fn push_history(&mut self, samples: &Samples) {
         let w = self.history_window;
         push_bounded(&mut self.cpu_history, samples.cpu_usage as u64, w);
@@ -548,6 +579,7 @@ impl App {
         );
     }
 
+    /// Returns a reference to the current tab's search state, if applicable.
     pub const fn tab_state(&self) -> Option<&TabState> {
         match self.active_tab {
             Tab::Proc => Some(&self.proc_state),
@@ -557,6 +589,7 @@ impl App {
         }
     }
 
+    /// Returns a mutable reference to the current tab's search state, if applicable.
     pub const fn tab_state_mut(&mut self) -> Option<&mut TabState> {
         match self.active_tab {
             Tab::Proc => Some(&mut self.proc_state),
@@ -616,6 +649,7 @@ impl Default for App {
     }
 }
 
+/// Configuration deserialized from a TOML file, with defaults for all fields.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Config {
@@ -662,6 +696,7 @@ fn read_config_file(path: &Path) -> Result<Config, String> {
         .map_err(|e| format!("config file '{}' has invalid TOML: {e}", path.display()))
 }
 
+/// Prints usage information to stderr.
 pub fn print_help() {
     eprintln!("Usage: thrum [OPTIONS]");
     eprintln!();
@@ -747,73 +782,60 @@ fn load_config(config_path: Option<&str>) -> Result<Config, CliAction> {
     }
 }
 
+/// Parses command-line arguments and returns the corresponding [`CliAction`].
 pub fn parse_args(args: &[String]) -> CliAction {
+    match try_parse_args(args) {
+        Ok(cfg) => CliAction::Config(cfg),
+        Err(action) => action,
+    }
+}
+
+fn find_config_path(args: &[String]) -> Result<Option<&str>, CliAction> {
+    let pos = args.iter().position(|a| a == "--config" || a == "-c");
+    match pos {
+        None => Ok(None),
+        Some(i) => {
+            let val = args
+                .get(i + 1)
+                .ok_or_else(|| CliAction::Error("--config requires a value".to_owned()))?;
+            Ok(Some(val.as_str()))
+        }
+    }
+}
+
+fn try_parse_args(args: &[String]) -> Result<Config, CliAction> {
     for arg in args {
         match arg.as_str() {
-            "--help" | "-h" => return CliAction::Help,
-            "--version" | "-V" => return CliAction::Version,
+            "--help" | "-h" => return Err(CliAction::Help),
+            "--version" | "-V" => return Err(CliAction::Version),
             _ => {}
         }
     }
 
-    let config_path = (0..args.len())
-        .position(|i| matches!(args[i].as_str(), "--config" | "-c"))
-        .and_then(|i| {
-            if i + 1 < args.len() {
-                Some(args[i + 1].as_str())
-            } else {
-                None
-            }
-        });
-
-    let mut cfg = match load_config(config_path) {
-        Ok(c) => c,
-        Err(e) => return e,
-    };
+    let mut cfg = load_config(find_config_path(args)?)?;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-r" | "--refresh" => {
-                cfg.refresh_ms = match parse_positive_int(args, "--refresh", &mut i) {
-                    Ok(n) => n,
-                    Err(e) => return e,
-                };
+                cfg.refresh_ms = parse_positive_int(args, "--refresh", &mut i)?;
             }
             "-t" | "--tab" => {
-                let name = match parse_flag_value(args, "--tab", &mut i) {
-                    Ok(n) => n,
-                    Err(e) => return e,
-                };
-                cfg.default_tab = match parse_tab_name(name) {
-                    Ok(t) => t,
-                    Err(e) => return e,
-                };
+                let name = parse_flag_value(args, "--tab", &mut i)?;
+                cfg.default_tab = parse_tab_name(name)?;
             }
             "-s" | "--no-sidebar" => cfg.hide_sidebar = true,
             "--tabs" => {
-                let val = match parse_flag_value(args, "--tabs", &mut i) {
-                    Ok(v) => v,
-                    Err(e) => return e,
-                };
-                cfg.tab_orientation = match parse_tab_orientation(val) {
-                    Ok(o) => o,
-                    Err(e) => return e,
-                };
+                let val = parse_flag_value(args, "--tabs", &mut i)?;
+                cfg.tab_orientation = parse_tab_orientation(val)?;
             }
             "--scroll-step" => {
-                cfg.scroll_step = match parse_positive_int(args, "--scroll-step", &mut i) {
-                    Ok(n) => n as usize,
-                    Err(e) => return e,
-                };
+                cfg.scroll_step = parse_positive_int(args, "--scroll-step", &mut i)? as usize;
             }
             "-c" | "--config" => {
-                if i + 1 >= args.len() {
-                    return CliAction::Error("--config requires a value".to_owned());
-                }
                 i += 1;
             }
-            _ => return CliAction::Error(format!("unknown flag '{}'", args[i])),
+            _ => return Err(CliAction::Error(format!("unknown flag '{}'", args[i]))),
         }
         i += 1;
     }
@@ -821,9 +843,10 @@ pub fn parse_args(args: &[String]) -> CliAction {
     if cfg.refresh_ms == 0 {
         cfg.refresh_ms = 1000;
     }
-    CliAction::Config(cfg)
+    Ok(cfg)
 }
 
+/// Returns `part / total * 100` as a percentage, or `0.0` when total is zero.
 pub const fn pct(part: u64, total: u64) -> f64 {
     if total > 0 {
         part as f64 / total as f64 * 100.0
@@ -1276,7 +1299,6 @@ mod tests {
         }
     }
 
-    // Restored in v0.4.2 — dropped during PR #132 merge to main (58c0702)
     #[test]
     fn ctrl_k_exits_search_and_kills_in_one_press() {
         let mut app = App::new();
