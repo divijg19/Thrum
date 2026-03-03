@@ -127,6 +127,10 @@ impl Tab {
         }
     }
 
+    pub const fn is_proc(self) -> bool {
+        matches!(self, Self::Proc)
+    }
+
     pub const fn has_searchable_state(self) -> bool {
         matches!(self, Self::Proc | Self::Net | Self::Files)
     }
@@ -314,12 +318,12 @@ impl App {
             {
                 self.cycle_tab(false);
             }
-            KeyCode::Delete if self.active_tab == Tab::Proc && self.selected.is_some() => {
+            KeyCode::Delete if self.active_tab.is_proc() && self.selected.is_some() => {
                 self.kill_state = Some(KillState::Confirm);
             }
             KeyCode::Char('k')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.active_tab == Tab::Proc
+                    && self.active_tab.is_proc()
                     && self.selected.is_some() =>
             {
                 self.kill_state = Some(KillState::Dispatch(Signal::Kill));
@@ -494,7 +498,7 @@ impl App {
     }
 
     fn clear_selection_and_kill(&mut self) {
-        if self.active_tab == Tab::Proc {
+        if self.active_tab.is_proc() {
             self.selected = None;
             self.kill_state = None;
         }

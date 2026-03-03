@@ -96,12 +96,20 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ])
     .areas(area);
 
+    render_dash_gauges(frame, gauges, samples);
+    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
+    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
+    render_dash_load(frame, load, samples);
+    render_dash_summary(frame, summary, samples);
+}
+
+fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
     let [cpu_area, mem_area, swap_area] = Layout::horizontal([
         Constraint::Percentage(34),
         Constraint::Percentage(33),
         Constraint::Percentage(33),
     ])
-    .areas(gauges);
+    .areas(area);
 
     let g = Gauge::default()
         .gauge_style(STYLE_GREEN)
@@ -137,10 +145,9 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .percent(swap_pct)
         .label(swap_label);
     frame.render_widget(&swap_g, swap_area);
+}
 
-    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
-    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
-
+fn render_dash_load(frame: &mut Frame, area: Rect, samples: &Samples) {
     let l = Paragraph::new(Line::from(vec![
         Span::styled("Load Average  ", Style::new().bold()),
         Span::raw(format!(
@@ -150,8 +157,10 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ]))
     .alignment(Alignment::Center)
     .gray();
-    frame.render_widget(&l, load);
+    frame.render_widget(&l, area);
+}
 
+fn render_dash_summary(frame: &mut Frame, area: Rect, samples: &Samples) {
     let s = Paragraph::new(Line::from(vec![
         Span::styled("Net ", Style::new().bold()),
         Span::raw(format!(
@@ -169,7 +178,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ]))
     .alignment(Alignment::Center)
     .gray();
-    frame.render_widget(&s, summary);
+    frame.render_widget(&s, area);
 }
 
 fn format_bytes(bytes: u64, binary: bool) -> String {
@@ -819,7 +828,7 @@ impl StatusBar {
             return format!("Error: {err}");
         }
         let label = app.active_tab.label();
-        let sort = if app.active_tab == Tab::Proc {
+        let sort = if app.active_tab.is_proc() {
             let arrow = if app.proc_sort_asc { "↑" } else { "↓" };
             Some(format!(" [{} {}{}]", label, app.proc_sort_field, arrow))
         } else {
@@ -874,13 +883,13 @@ impl StatusBar {
             }
         }
 
-        if app.active_tab == Tab::Proc && app.selected.is_some() {
+        if app.active_tab.is_proc() && app.selected.is_some() {
             hints.push("Delete Kill".to_owned());
             hints.push("Ctrl+K Kill!".to_owned());
         }
 
         if hints.len() < MAX_HINTS {
-            if app.active_tab == Tab::Proc {
+            if app.active_tab.is_proc() {
                 hints.push("\u{2191}\u{2193} Select".to_owned());
             } else {
                 hints.push("1-9 Tab".to_owned());
@@ -940,15 +949,23 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
             name: p.name.clone(),
         });
 
-    let table_area = render_search_bar(frame, area, &app.proc_state.query, app.proc_state.focused);
+    let content_area =
+        render_search_bar(frame, area, &app.proc_state.query, app.proc_state.focused);
 
     if count == 0 && !app.proc_state.query.is_empty() {
         let p = Paragraph::new("No matching processes")
             .fg(Color::DarkGray)
             .alignment(Alignment::Center);
-        frame.render_widget(p, table_area);
+        frame.render_widget(p, content_area);
         return;
     }
+
+    let [table_area, cpu_spark, mem_spark] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+    ])
+    .areas(content_area);
 
     let (start, end) = clamp_scroll(
         app.proc_state.selection,
@@ -1008,6 +1025,9 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
             samples.processes.len(),
         )));
     frame.render_widget(table, table_area);
+
+    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
+    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
