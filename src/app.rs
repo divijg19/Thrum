@@ -191,40 +191,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        fn history() -> VecDeque<u64> {
-            VecDeque::with_capacity(WINDOW)
-        }
-        Self {
-            active_tab: Tab::Dash,
-            sidebar_visible: true,
-            tab_orientation: TabOrientation::Sidebar,
-            tab_bar_visible: true,
-            cpu_history: history(),
-            mem_history: history(),
-            net_rx_history: history(),
-            net_tx_history: history(),
-            disk_read_history: history(),
-            disk_write_history: history(),
-            temp_history: history(),
-            disk_usage_history: history(),
-            swap_history: history(),
-            proc_state: TabState::default(),
-            net_state: TabState::default(),
-            files_state: TabState::default(),
-            selected: None,
-            kill_state: None,
-            scroll_step: 3,
-            proc_sort_field: ProcSortField::Cpu,
-            proc_sort_asc: false,
-            should_quit: false,
-            help_visible: false,
-            kill_feedback: None,
-            paused: false,
-            history_window: WINDOW,
-            term_width: 80,
-            term_height: 24,
-            error_msg: None,
-        }
+        Self::default()
     }
 
     pub fn apply_config(&mut self, cfg: &Config) {
@@ -608,9 +575,47 @@ impl App {
     }
 }
 
+impl Default for App {
+    fn default() -> Self {
+        fn history() -> VecDeque<u64> {
+            VecDeque::with_capacity(WINDOW)
+        }
+        Self {
+            active_tab: Tab::Dash,
+            sidebar_visible: true,
+            tab_orientation: TabOrientation::Sidebar,
+            tab_bar_visible: true,
+            cpu_history: history(),
+            mem_history: history(),
+            net_rx_history: history(),
+            net_tx_history: history(),
+            disk_read_history: history(),
+            disk_write_history: history(),
+            temp_history: history(),
+            disk_usage_history: history(),
+            swap_history: history(),
+            proc_state: TabState::default(),
+            net_state: TabState::default(),
+            files_state: TabState::default(),
+            selected: None,
+            kill_state: None,
+            scroll_step: 3,
+            proc_sort_field: ProcSortField::Cpu,
+            proc_sort_asc: false,
+            should_quit: false,
+            help_visible: false,
+            kill_feedback: None,
+            paused: false,
+            history_window: WINDOW,
+            term_width: 80,
+            term_height: 24,
+            error_msg: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-#[expect(clippy::struct_field_names)]
 pub struct Config {
     pub refresh_ms: u64,
     pub default_tab: Tab,
@@ -695,7 +700,7 @@ fn parse_positive_int(args: &[String], flag: &str, i: &mut usize) -> Result<u64,
 }
 
 fn parse_tab_name(name: &str) -> Result<Tab, CliAction> {
-    match name.to_lowercase().as_str() {
+    match name.to_ascii_lowercase().as_str() {
         "dash" => Ok(Tab::Dash),
         "proc" => Ok(Tab::Proc),
         "net" => Ok(Tab::Net),
@@ -825,7 +830,7 @@ pub const fn pct(part: u64, total: u64) -> f64 {
     }
 }
 
-pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
+fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
     if deque.len() >= max {
         deque.pop_front();
     }
@@ -867,7 +872,6 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sysinfo::Signal;
 
     #[test]
     fn tab_has_nine_variants() {
@@ -895,7 +899,6 @@ mod tests {
         assert!(!app.should_quit);
         assert_eq!(app.proc_state.scroll, 0);
         assert_eq!(app.proc_state.selection, 0);
-        assert!(app.selected.is_none());
         assert!(app.selected.is_none());
         assert!(app.kill_state.is_none());
         assert!(app.proc_state.query.is_empty());
@@ -1057,7 +1060,6 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert!(app.selected.is_none());
-        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -1069,7 +1071,6 @@ mod tests {
         });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
         assert!(app.selected.is_none());
     }
 
@@ -1109,7 +1110,6 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
         assert!(app.selected.is_none());
-        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -1134,7 +1134,6 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
         assert!(app.selected.is_none());
     }
 
