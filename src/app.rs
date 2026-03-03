@@ -386,7 +386,7 @@ impl App {
     }
 
     fn handle_proc_sort_key(&mut self, key: KeyEvent) -> bool {
-        if self.active_tab != Tab::Proc || !key.modifiers.is_empty() {
+        if !self.active_tab.is_proc() || !key.modifiers.is_empty() {
             return false;
         }
         if let KeyCode::Char(c) = key.code {
@@ -540,66 +540,32 @@ impl App {
     }
 
     pub fn push_history(&mut self, samples: &Samples) {
+        let w = self.history_window;
+        push_bounded(&mut self.cpu_history, samples.cpu_usage as u64, w);
         push_bounded(
-            &mut self.cpu_history,
-            samples.cpu_usage as u64,
-            self.history_window,
+            &mut self.mem_history,
+            pct(samples.mem_used, samples.mem_total) as u64,
+            w,
         );
-
-        let mem_pct = pct(samples.mem_used, samples.mem_total) as u64;
-        push_bounded(&mut self.mem_history, mem_pct, self.history_window);
-
-        push_bounded(
-            &mut self.net_rx_history,
-            samples.net_rx_rate,
-            self.history_window,
-        );
-        push_bounded(
-            &mut self.net_tx_history,
-            samples.net_tx_rate,
-            self.history_window,
-        );
-
-        push_bounded(
-            &mut self.disk_read_history,
-            samples.disk_read_rate,
-            self.history_window,
-        );
-        push_bounded(
-            &mut self.disk_write_history,
-            samples.disk_write_rate,
-            self.history_window,
-        );
-
-        let valid_temps: Vec<f32> = samples
-            .temperatures
-            .iter()
-            .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
-            .collect();
-        let avg_temp = if valid_temps.is_empty() {
-            0.0
-        } else {
-            valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
-        };
+        push_bounded(&mut self.net_rx_history, samples.net_rx_rate, w);
+        push_bounded(&mut self.net_tx_history, samples.net_tx_rate, w);
+        push_bounded(&mut self.disk_read_history, samples.disk_read_rate, w);
+        push_bounded(&mut self.disk_write_history, samples.disk_write_rate, w);
         push_bounded(
             &mut self.temp_history,
-            (avg_temp * 10.0) as u64,
-            self.history_window,
+            (samples.avg_temperature() * 10.0) as u64,
+            w,
         );
-
-        let avg_usage = if samples.disks.is_empty() {
-            0.0
-        } else {
-            samples.disks.iter().map(|d| d.usage_pct).sum::<f32>() / samples.disks.len() as f32
-        };
         push_bounded(
             &mut self.disk_usage_history,
-            (avg_usage * 10.0) as u64,
-            self.history_window,
+            (samples.avg_disk_usage() * 10.0) as u64,
+            w,
         );
-
-        let swap_pct = pct(samples.swap_used, samples.swap_total) as u64;
-        push_bounded(&mut self.swap_history, swap_pct, self.history_window);
+        push_bounded(
+            &mut self.swap_history,
+            pct(samples.swap_used, samples.swap_total) as u64,
+            w,
+        );
     }
 
     pub const fn tab_state(&self) -> Option<&TabState> {
