@@ -1,3 +1,10 @@
+//! System data collection: sampling processes, networks, disks, temperatures, and CPU.
+//!
+//! Central types: [`Samplers`] (data source), [`Samples`] (snapshot),
+//! [`ProcessInfo`], [`NetInfo`], [`DiskInfo`], [`SysInfo`], [`CpuInfo`],
+//! [`DiskIoInfo`], [`TempInfo`]. The [`Samplers::sample`] method collects all
+//! metrics and returns a [`Samples`] snapshot every refresh tick.
+
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::hash::Hash;
@@ -15,7 +22,7 @@ pub struct ProcessInfo {
     pub memory: u64,
     pub virtual_memory: u64,
     pub run_time: u64,
-    pub status: String,
+    pub status: &'static str,
 }
 
 /// Snapshot of a network interface (name, bytes, state, MAC, IP).
@@ -23,7 +30,7 @@ pub struct NetInfo {
     pub name: String,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
-    pub state: String,
+    pub state: &'static str,
     pub mac: String,
     pub ip: String,
 }
@@ -253,7 +260,7 @@ impl Samplers {
                     memory: p.memory(),
                     virtual_memory: p.virtual_memory(),
                     run_time: p.run_time(),
-                    status: format_status(p.status()).to_string(),
+                    status: format_status(p.status()),
                 })
                 .collect()
         } else {
@@ -317,7 +324,7 @@ impl Samplers {
                 )
             })
             .collect();
-        raw.sort_by(|a, b| a.0.cmp(&b.0));
+        raw.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         let mut interfaces = Vec::with_capacity(raw.len());
         let mut net_rx_rate = 0u64;
@@ -335,8 +342,7 @@ impl Samplers {
                     InterfaceOperationalState::Down => "Down",
                     InterfaceOperationalState::LowerLayerDown => "LLDown",
                     _ => "?",
-                }
-                .to_string(),
+                },
                 mac,
                 ip,
             });
@@ -372,7 +378,7 @@ impl Samplers {
                 }
             })
             .collect();
-        disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+        disks.sort_unstable_by(|a, b| a.mount_point.cmp(&b.mount_point));
         disks
     }
 
@@ -398,7 +404,7 @@ impl Samplers {
             });
         }
 
-        disk_io.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+        disk_io.sort_unstable_by(|a, b| a.mount_point.cmp(&b.mount_point));
         let mount_points: HashSet<&str> = disk_io.iter().map(|d| d.mount_point.as_str()).collect();
         self.disk_io_rates
             .retain(|k| mount_points.contains(k.as_str()));
@@ -417,7 +423,7 @@ impl Samplers {
                 critical: c.critical(),
             })
             .collect();
-        temperatures.sort_by(|a, b| a.label.cmp(&b.label));
+        temperatures.sort_unstable_by(|a, b| a.label.cmp(&b.label));
         temperatures
     }
 
@@ -549,7 +555,7 @@ mod tests {
             name: String::from("eth0"),
             rx_bytes: 1024,
             tx_bytes: 2048,
-            state: String::from("Up"),
+            state: "Up",
             mac: String::from("00:11:22:33:44:55"),
             ip: String::from("192.168.1.1/24"),
         };

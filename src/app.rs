@@ -1,3 +1,9 @@
+//! Application state, configuration, CLI argument parsing, and event handling.
+//!
+//! Central types: [`App`], [`Config`], [`Tab`], [`TabState`], [`ProcSortField`].
+//! CLI entry point: [`parse_args`], [`print_help`].
+//! Event dispatch: [`App::handle_key`], [`App::handle_mouse`].
+
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -19,6 +25,13 @@ pub const MAX_QUERY_LEN: usize = 256;
 pub const MAX_CLICK_OFFSET: usize = 1000;
 /// Width of the sidebar in columns, derived from the number of tab labels.
 pub const SIDEBAR_WIDTH: u16 = Tab::ALL.len() as u16;
+
+/// Default refresh interval in milliseconds.
+const DEFAULT_REFRESH_MS: u64 = 1000;
+/// Default mouse scroll step.
+const DEFAULT_SCROLL_STEP: usize = 3;
+/// Default process sort field.
+const DEFAULT_SORT_FIELD: ProcSortField = ProcSortField::Cpu;
 
 /// Mapping of single-character hotkeys to human-readable signal names and OS signals.
 pub const KILL_SIGNAL_MAP: &[(char, &str, Signal)] = &[
@@ -634,8 +647,8 @@ impl Default for App {
             files_state: TabState::default(),
             selected: None,
             kill_state: None,
-            scroll_step: 3,
-            proc_sort_field: ProcSortField::Cpu,
+            scroll_step: DEFAULT_SCROLL_STEP,
+            proc_sort_field: DEFAULT_SORT_FIELD,
             proc_sort_asc: false,
             should_quit: false,
             help_visible: false,
@@ -668,14 +681,14 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            refresh_ms: 1000,
+            refresh_ms: DEFAULT_REFRESH_MS,
             default_tab: Tab::Dash,
             hide_sidebar: false,
             tab_orientation: TabOrientation::Sidebar,
-            proc_sort_default: ProcSortField::Cpu,
+            proc_sort_default: DEFAULT_SORT_FIELD,
             proc_sort_asc_default: false,
             history_window: WINDOW,
-            scroll_step: 3,
+            scroll_step: DEFAULT_SCROLL_STEP,
             config_warning: None,
         }
     }
@@ -841,7 +854,7 @@ fn try_parse_args(args: &[String]) -> Result<Config, CliAction> {
     }
 
     if cfg.refresh_ms == 0 {
-        cfg.refresh_ms = 1000;
+        cfg.refresh_ms = DEFAULT_REFRESH_MS;
     }
     Ok(cfg)
 }
