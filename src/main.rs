@@ -1,3 +1,4 @@
+#![expect(clippy::multiple_crate_versions)]
 use thrum::{CliAction, parse_args, print_help, run};
 
 fn main() -> std::io::Result<()> {
