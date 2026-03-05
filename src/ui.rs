@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
 
 use crate::app::{self, App, KillState, MAX_QUERY_LEN, ProcSortField, Tab};
 
-pub const MAX_HINTS: usize = 4;
+const MAX_HINTS: usize = 4;
 
 pub const SPARKLINE_HEIGHT: u16 = 3;
 
@@ -51,7 +51,7 @@ pub const STYLE_BOLD: Style = Style::new().bold();
 
 // Layout constants
 pub const DASH_GAUGE_HEIGHT: u16 = 3;
-pub const SEARCH_BAR_HEIGHT: u16 = 3;
+const SEARCH_BAR_HEIGHT: u16 = 3;
 pub const INFO_BLOCK_HEIGHT: u16 = 8;
 pub const SINGLE_LINE_HEIGHT: u16 = 1;
 pub const STATUS_HINTS_MIN_WIDTH: u16 = 20;
@@ -60,7 +60,7 @@ pub const STATUS_HINTS_MIN_WIDTH: u16 = 20;
 pub const GIB: u64 = 1 << 30;
 
 /// Bytes per mebibyte (1024²).
-pub const MIB: u64 = 1 << 20;
+const MIB: u64 = 1 << 20;
 
 // Dash gauge widths
 pub const DASH_CPU_GAUGE_WIDTH: u16 = 34;
@@ -80,7 +80,7 @@ pub const NET_MAC_WIDTH: u16 = 17;
 pub const PROC_PID_WIDTH: u16 = 7;
 pub const PROC_NUM_WIDTH: u16 = 9;
 
-pub const HINT_SEP: &str = " │ ";
+const HINT_SEP: &str = " │ ";
 
 pub const PROC_HEADERS: &[(&str, ProcSortField)] = &[
     ("Name", ProcSortField::Name),
@@ -348,13 +348,7 @@ pub fn render_sparkline(
     frame.render_widget(&s, area);
 }
 
-pub fn render_overlay(
-    frame: &mut Frame,
-    area: Rect,
-    lines: Vec<Line>,
-    title: &str,
-    min_width: u16,
-) {
+fn render_overlay(frame: &mut Frame, area: Rect, lines: Vec<Line>, title: &str, min_width: u16) {
     let height = lines.len() as u16 + 2;
     let [_, inner, _] = Layout::vertical([
         Constraint::Fill(1),
@@ -376,7 +370,7 @@ pub fn render_overlay(
     frame.render_widget(&p, centered);
 }
 
-pub fn render_help(frame: &mut Frame, area: Rect) {
+fn render_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
         Line::from("  ?            Toggle help           Ctrl+T          Cycle orientation"),
@@ -405,36 +399,35 @@ pub fn render_help(frame: &mut Frame, area: Rect) {
 struct StatusBar;
 
 impl StatusBar {
-    fn ctx_string(app: &App) -> String {
+    fn ctx_string(app: &App) -> Cow<'static, str> {
         if let Some(ref fb) = app.kill_feedback {
-            return fb.clone();
+            return Cow::Owned(fb.clone());
         }
         if app.paused {
-            return "PAUSED (Space to resume)".to_owned();
+            return Cow::Borrowed("PAUSED (Space to resume)");
         }
         if app.help_visible {
-            return "Help (? to close)".to_owned();
+            return Cow::Borrowed("Help (? to close)");
         }
         if app.kill_state == Some(KillState::Confirm) {
             let pid = app.selected_pid();
             let name = app.selected_name();
-            return format!("Kill? PID {pid} ({name})");
+            return Cow::Owned(format!("Kill? PID {pid} ({name})"));
         }
         if let Some(ref err) = app.error_msg {
-            return format!("Error: {err}");
+            return Cow::Owned(format!("Error: {err}"));
         }
         let label = app.active_tab.label();
-        let sort = if app.active_tab.is_proc() {
+        if app.active_tab.is_proc() {
             let arrow = if app.proc_sort_asc {
                 "\u{2191}"
             } else {
                 "\u{2193}"
             };
-            Some(format!(" [{} {}{}]", label, app.proc_sort_field, arrow))
+            Cow::Owned(format!(" [{label} {}{arrow}]", app.proc_sort_field))
         } else {
-            None
-        };
-        sort.unwrap_or_else(|| label.to_owned())
+            Cow::Borrowed(label)
+        }
     }
 
     fn status_hints(app: &App) -> Vec<String> {
@@ -497,7 +490,7 @@ impl StatusBar {
         hints
     }
 
-    fn display(app: &App) -> (String, String) {
+    fn display(app: &App) -> (Cow<'static, str>, String) {
         let ctx = Self::ctx_string(app);
         let hints = Self::status_hints(app).join(HINT_SEP);
         (ctx, hints)

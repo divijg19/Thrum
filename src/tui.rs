@@ -86,7 +86,10 @@ fn sort_processes(filtered: &mut [&ProcessInfo], field: ProcSortField, asc: bool
 
 /// Renders a filterable, scrollable table with search, selection, and pagination.
 /// Returns `true` when items exist (or query is empty), `false` when filtered to zero.
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all parameters are needed for generic filter+table+selection rendering"
+)]
 fn render_filtered_table<'a, T>(
     frame: &mut Frame,
     area: Rect,
@@ -145,7 +148,10 @@ fn render_filtered_table<'a, T>(
     true
 }
 
-#[expect(clippy::needless_pass_by_ref_mut)]
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
+)]
 fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
         Constraint::Fill(1),
@@ -185,10 +191,11 @@ fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
     ])
     .areas(area);
 
+    let cpu = samples.cpu_usage.min(100.0);
     let g = Gauge::default()
         .gauge_style(STYLE_GREEN)
-        .percent((samples.cpu_usage.min(100.0)) as u16)
-        .label(format!("CPU: {:.1}%", samples.cpu_usage.min(100.0)));
+        .percent(cpu as u16)
+        .label(format!("CPU: {cpu:.1}%"));
     frame.render_widget(&g, cpu_area);
 
     let mem_pct_f = app::pct(samples.mem_used, samples.mem_total.max(1)).min(100.0);
@@ -285,7 +292,10 @@ fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples)
     );
 }
 
-#[expect(clippy::needless_pass_by_ref_mut)]
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
+)]
 fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mem_total_gb = samples.mem_total as f64 / GIB as f64;
     let mem_used_gb = samples.mem_used as f64 / GIB as f64;
@@ -362,7 +372,10 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     );
 }
 
-#[expect(clippy::needless_pass_by_ref_mut)]
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
+)]
 fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
@@ -477,7 +490,10 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     );
 }
 
-#[expect(clippy::needless_pass_by_ref_mut)]
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
+)]
 fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [table_area, read_spark, write_spark] = Layout::vertical([
         Constraint::Fill(1),

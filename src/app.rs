@@ -14,21 +14,21 @@ use crate::cli::Config;
 use crate::samplers::Samples;
 
 /// Number of items per page in scrollable lists.
-pub const PAGE_SIZE: usize = 10;
+const PAGE_SIZE: usize = 10;
 /// Number of historical samples retained for sparkline rendering.
-pub const WINDOW: usize = 60;
+const WINDOW: usize = 60;
 /// Maximum length of the search/filter query string.
 pub const MAX_QUERY_LEN: usize = 256;
 /// Maximum pixel offset considered a valid mouse click on a table row.
-pub const MAX_CLICK_OFFSET: usize = 1000;
+const MAX_CLICK_OFFSET: usize = 1000;
 /// Width of the sidebar in columns, derived from the number of tab labels.
 pub const SIDEBAR_WIDTH: u16 = Tab::ALL.len() as u16;
 /// Row offset from frame top to content area (main block top border).
-pub const CONTENT_BORDER: u16 = 1;
+const CONTENT_BORDER: u16 = 1;
 /// Additional row consumed by the horizontal tab bar.
-pub const TAB_BAR_HEIGHT: u16 = 1;
+const TAB_BAR_HEIGHT: u16 = 1;
 /// Layout offset for table row hit-testing: search bar border + table header.
-pub const TABLE_TOP_OFFSET: u16 = 2;
+const TABLE_TOP_OFFSET: u16 = 2;
 
 /// Default mouse scroll step.
 const DEFAULT_SCROLL_STEP: usize = 3;
@@ -184,7 +184,10 @@ pub struct SelectionState {
 }
 
 /// Central application state combining UI state, history buffers, and configuration.
-#[expect(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "flags-struct refactor is deferred to v0.6.x; each field is semantically distinct"
+)]
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -215,6 +218,25 @@ pub struct App {
     pub term_width: u16,
     pub term_height: u16,
     pub error_msg: Option<String>,
+}
+
+macro_rules! tab_state_match {
+    (& $app:expr) => {
+        match $app.active_tab {
+            Tab::Proc => Some(&$app.proc_state),
+            Tab::Net => Some(&$app.net_state),
+            Tab::Files => Some(&$app.files_state),
+            _ => None,
+        }
+    };
+    (&mut $app:expr) => {
+        match $app.active_tab {
+            Tab::Proc => Some(&mut $app.proc_state),
+            Tab::Net => Some(&mut $app.net_state),
+            Tab::Files => Some(&mut $app.files_state),
+            _ => None,
+        }
+    };
 }
 
 impl App {
@@ -590,22 +612,12 @@ impl App {
 
     /// Returns a reference to the current tab's search state, if applicable.
     pub const fn tab_state(&self) -> Option<&TabState> {
-        match self.active_tab {
-            Tab::Proc => Some(&self.proc_state),
-            Tab::Net => Some(&self.net_state),
-            Tab::Files => Some(&self.files_state),
-            _ => None,
-        }
+        tab_state_match!(&self)
     }
 
     /// Returns a mutable reference to the current tab's search state, if applicable.
     pub const fn tab_state_mut(&mut self) -> Option<&mut TabState> {
-        match self.active_tab {
-            Tab::Proc => Some(&mut self.proc_state),
-            Tab::Net => Some(&mut self.net_state),
-            Tab::Files => Some(&mut self.files_state),
-            _ => None,
-        }
+        tab_state_match!(&mut self)
     }
 
     fn tab_from_horizontal_click(&self, col: u16) -> Option<usize> {
