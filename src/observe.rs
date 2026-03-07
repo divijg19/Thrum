@@ -118,7 +118,6 @@ const DOMINANT_MIN_SCORE: f64 = 0.05;
 const DOMINANT_MAX_COUNT: usize = 3;
 
 const CHANGE_MIN_DELTA: f32 = 5.0;
-const CHANGE_NEW_MIN_CPU: f32 = 1.0;
 const CHANGE_MAX_COUNT: usize = 3;
 
 const NETWORK_THRESHOLD_BYTES: u64 = 10_000_000;
@@ -236,7 +235,7 @@ fn observe_recent_changes(results: &mut Vec<Observation>, current: &Samples, pre
         if !p.cpu.is_finite() {
             continue;
         }
-        if !curr_pids.contains(&p.pid) && p.cpu >= CHANGE_NEW_MIN_CPU {
+        if !curr_pids.contains(&p.pid) && p.cpu >= CHANGE_MIN_DELTA {
             deltas.push((p.cpu, p, p.cpu, 0.0));
         }
     }
@@ -283,7 +282,7 @@ fn observe_memory_pressure_trend(
     current: &Samples,
     prev: &PrevState,
 ) {
-    if prev.processes.is_empty() || current.mem_total == 0 {
+    if prev.processes.is_empty() || current.mem_total == 0 || prev.mem_used == 0 {
         return;
     }
 
@@ -431,7 +430,7 @@ fn compute_cpu_pressure_trend(
     }
 
     let trend = if !load_five.is_finite() || load_five < 0.01 {
-        PressureTrend::Emerging
+        return None;
     } else {
         let ratio = load_one / load_five;
         if ratio > CPU_TREND_EMERGING_RATIO {
@@ -562,6 +561,38 @@ mod tests {
 
         let score_004 = composite_score(&make_proc(1, "p", 0.1, 100_000_000), max_mem);
         assert!(score_004 < DOMINANT_MIN_SCORE, "low score filtered");
+    }
+
+    #[test]
+    fn dominant_min_score_boundary() {
+        let max_mem = 4_000_000_000u64;
+
+        let below = make_samples(vec![make_proc(1, "p", 1.0, 100_000_000)], max_mem);
+        let obs_below = observe(&below, &PrevState::default());
+        assert!(
+            obs_below
+                .iter()
+                .all(|o| !matches!(o.kind, ObservationKind::DominantProcess { .. })),
+            "score < 0.05 filtered"
+        );
+
+        let at = make_samples(vec![make_proc(1, "p", 2.0, 120_000_000)], max_mem);
+        let obs_at = observe(&at, &PrevState::default());
+        assert!(
+            obs_at
+                .iter()
+                .any(|o| matches!(o.kind, ObservationKind::DominantProcess { .. })),
+            "score ≈ 0.05 detected"
+        );
+
+        let above = make_samples(vec![make_proc(1, "p", 3.0, 200_000_000)], max_mem);
+        let obs_above = observe(&above, &PrevState::default());
+        assert!(
+            obs_above
+                .iter()
+                .any(|o| matches!(o.kind, ObservationKind::DominantProcess { .. })),
+            "score > 0.05 detected"
+        );
     }
 
     // ── RecentChange ─────────────────────────────────────────────────────
@@ -696,12 +727,12 @@ mod tests {
     }
 
     #[test]
-    fn change_new_cpu_boundary() {
+    fn change_exited_cpu_boundary() {
         let prev = vec![
             make_proc(1, "p1", 0.0, 10_000_000),
-            make_proc(2, "p2", 0.99, 10_000_000),
-            make_proc(3, "p3", 1.0, 10_000_000),
-            make_proc(4, "p4", 1.01, 10_000_000),
+            make_proc(2, "p2", 4.99, 10_000_000),
+            make_proc(3, "p3", 5.0, 10_000_000),
+            make_proc(4, "p4", 5.01, 10_000_000),
         ];
         let curr = vec![make_proc(1, "p1", 0.0, 10_000_000)];
 
@@ -723,17 +754,20 @@ mod tests {
         assert!(
             exited
                 .iter()
-                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 3, .. }))
+                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 3, .. })),
+            "exited with 5.0 cpu detected"
         );
         assert!(
             exited
                 .iter()
-                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 4, .. }))
+                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 4, .. })),
+            "exited with 5.01 cpu detected"
         );
         assert!(
             !exited
                 .iter()
-                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 2, .. }))
+                .any(|o| matches!(&o.kind, ObservationKind::RecentChange { pid: 2, .. })),
+            "exited with 4.99 cpu not detected"
         );
     }
 
@@ -814,11 +848,9 @@ mod tests {
         };
         let obs = observe(&samples, &PrevState::default());
         assert!(
-            obs.iter().any(|o| matches!(
-                o.kind,
-                ObservationKind::CpuPressureTrend(PressureTrend::Emerging)
-            )),
-            "emerging when load_five is zero"
+            obs.iter()
+                .all(|o| !matches!(o.kind, ObservationKind::CpuPressureTrend(_))),
+            "no cpu pressure when load_five is zero (ratio meaningless)"
         );
     }
 
@@ -936,6 +968,51 @@ mod tests {
             obs.iter()
                 .all(|o| !matches!(o.kind, ObservationKind::MemoryPressureTrend(_))),
             "25% used is below memory pressure threshold"
+        );
+    }
+
+    #[test]
+    fn memory_pressure_delta_boundary() {
+        let make = |mem_used: u64, prev_mem: u64| {
+            let curr = Samples {
+                processes: vec![make_proc(1, "app", 1.0, 10_000_000)],
+                mem_total: 4_000_000_000,
+                mem_used,
+                ..Samples::default()
+            };
+            let prev = PrevState {
+                processes: vec![make_proc(1, "app", 1.0, 10_000_000)],
+                mem_used: prev_mem,
+                ..PrevState::default()
+            };
+            observe(&curr, &prev)
+        };
+
+        let below = make(3_200_000_000, 3_000_040_000);
+        assert!(
+            below.iter().any(|o| matches!(
+                o.kind,
+                ObservationKind::MemoryPressureTrend(PressureTrend::Stable)
+            )),
+            "delta 4.999 pp is Stable"
+        );
+
+        let at = make(3_200_000_000, 3_000_000_000);
+        assert!(
+            at.iter().any(|o| matches!(
+                o.kind,
+                ObservationKind::MemoryPressureTrend(PressureTrend::Stable)
+            )),
+            "delta 5.0 pp is Stable (threshold is > not >=)"
+        );
+
+        let above = make(3_200_000_000, 2_999_960_000);
+        assert!(
+            above.iter().any(|o| matches!(
+                o.kind,
+                ObservationKind::MemoryPressureTrend(PressureTrend::Emerging)
+            )),
+            "delta 5.001 pp is Emerging"
         );
     }
 
@@ -1247,6 +1324,63 @@ mod tests {
     }
 
     #[test]
+    fn cpu_pressure_medium_boundary() {
+        assert_eq!(
+            cpu_pressure_priority(1.999),
+            ObservationPriority::Low,
+            "<2.0 is Low"
+        );
+        assert_eq!(
+            cpu_pressure_priority(2.0),
+            ObservationPriority::Medium,
+            "2.0 is Medium"
+        );
+        assert_eq!(
+            cpu_pressure_priority(2.001),
+            ObservationPriority::Medium,
+            ">2.0 is Medium"
+        );
+    }
+
+    #[test]
+    fn cpu_pressure_high_boundary() {
+        assert_eq!(
+            cpu_pressure_priority(3.999),
+            ObservationPriority::Medium,
+            "<4.0 is Medium"
+        );
+        assert_eq!(
+            cpu_pressure_priority(4.0),
+            ObservationPriority::High,
+            "4.0 is High"
+        );
+        assert_eq!(
+            cpu_pressure_priority(4.001),
+            ObservationPriority::High,
+            ">4.0 is High"
+        );
+    }
+
+    #[test]
+    fn cpu_pressure_critical_boundary() {
+        assert_eq!(
+            cpu_pressure_priority(7.999),
+            ObservationPriority::High,
+            "<8.0 is High"
+        );
+        assert_eq!(
+            cpu_pressure_priority(8.0),
+            ObservationPriority::Critical,
+            "8.0 is Critical"
+        );
+        assert_eq!(
+            cpu_pressure_priority(8.001),
+            ObservationPriority::Critical,
+            ">8.0 is Critical"
+        );
+    }
+
+    #[test]
     fn mem_pressure_priority_tiers() {
         assert_eq!(
             mem_pressure_priority(96.0),
@@ -1267,6 +1401,63 @@ mod tests {
             mem_pressure_priority(65.0),
             ObservationPriority::Low,
             ">60% is Low"
+        );
+    }
+
+    #[test]
+    fn mem_pressure_medium_boundary() {
+        assert_eq!(
+            mem_pressure_priority(74.999),
+            ObservationPriority::Low,
+            "<75% is Low"
+        );
+        assert_eq!(
+            mem_pressure_priority(75.0),
+            ObservationPriority::Medium,
+            "75% is Medium"
+        );
+        assert_eq!(
+            mem_pressure_priority(75.001),
+            ObservationPriority::Medium,
+            ">75% is Medium"
+        );
+    }
+
+    #[test]
+    fn mem_pressure_high_boundary() {
+        assert_eq!(
+            mem_pressure_priority(84.999),
+            ObservationPriority::Medium,
+            "<85% is Medium"
+        );
+        assert_eq!(
+            mem_pressure_priority(85.0),
+            ObservationPriority::High,
+            "85% is High"
+        );
+        assert_eq!(
+            mem_pressure_priority(85.001),
+            ObservationPriority::High,
+            ">85% is High"
+        );
+    }
+
+    #[test]
+    fn mem_pressure_critical_boundary() {
+        assert_eq!(
+            mem_pressure_priority(94.999),
+            ObservationPriority::High,
+            "<95% is High"
+        );
+        assert_eq!(
+            mem_pressure_priority(95.0),
+            ObservationPriority::Critical,
+            "95% is Critical"
+        );
+        assert_eq!(
+            mem_pressure_priority(95.001),
+            ObservationPriority::Critical,
+            ">95% is Critical"
         );
     }
 

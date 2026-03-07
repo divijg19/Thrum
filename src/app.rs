@@ -1491,7 +1491,7 @@ mod tests {
             net_tx_rate: 500_000,
             load_one: 0.5,
             load_five: 0.3,
-            load_fifteen: 0.2,
+
             processes: vec![],
             interfaces: vec![],
             disks: vec![],
@@ -1531,7 +1531,7 @@ mod tests {
             net_tx_rate: 0,
             load_one: 0.0,
             load_five: 0.0,
-            load_fifteen: 0.0,
+
             processes: vec![],
             interfaces: vec![],
             disks: vec![],
@@ -1753,7 +1753,6 @@ mod tests {
         });
         app.kill_state = Some(KillState::Confirm);
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert!(app.selected.is_none(), "scroll clears selected");
         assert!(app.selected.is_none(), "scroll clears selected");
         assert!(app.kill_state.is_none(), "scroll clears kill_state");
     }

@@ -35,7 +35,7 @@ pub const SPARK_MEM_HISTORY_TITLE: &str = " History ";
 pub const SPARK_MEM_HISTORY_COLOR: Color = Color::LightBlue;
 pub const SPARK_SWAP_TITLE: &str = " Swap ";
 pub const SPARK_SWAP_COLOR: Color = Color::Yellow;
-pub const SPARK_TEMP_TITLE: &str = " History ";
+pub const SPARK_TEMP_TITLE: &str = " Thermal ";
 pub const SPARK_TEMP_COLOR: Color = Color::Red;
 
 pub const STYLE_GREEN: Style = Style::new().fg(Color::Green);
