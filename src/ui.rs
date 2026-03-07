@@ -322,13 +322,6 @@ pub fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bo
 }
 
 pub fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, Cow<'_, str>)]) {
-    let [_, info, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(items.len() as u16),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-
     let lines: Vec<Line> = items
         .iter()
         .map(|(label, value)| {
@@ -338,7 +331,7 @@ pub fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, Cow<'_, 
             ])
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines).style(STYLE_GRAY), info);
+    frame.render_widget(Paragraph::new(lines).style(STYLE_GRAY), area);
 }
 
 pub fn render_sparkline(

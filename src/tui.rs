@@ -159,14 +159,8 @@ fn render_overview(
     samples: &Samples,
     observations: &[Observation],
 ) {
-    let [_, gauges, _, obs_area, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(DASH_GAUGE_HEIGHT),
-        Constraint::Length(SINGLE_LINE_HEIGHT),
-        Constraint::Fill(1),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
+    let [gauges, obs_area] =
+        Layout::vertical([Constraint::Length(DASH_GAUGE_HEIGHT), Constraint::Fill(1)]).areas(area);
 
     render_dash_gauges(frame, gauges, samples);
 
@@ -321,24 +315,22 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mem_avail_gb = samples.mem_available as f64 / GIB as f64;
     let mem_free_gb = samples.mem_free as f64 / GIB as f64;
 
-    let mem_used_pct = app::pct(samples.mem_used, samples.mem_total);
-    let mem_avail_pct = app::pct(samples.mem_available, samples.mem_total);
-    let mem_free_pct = app::pct(samples.mem_free, samples.mem_total);
+    let mem_used_pct = app::pct(samples.mem_used, samples.mem_total.max(1));
+    let mem_avail_pct = app::pct(samples.mem_available, samples.mem_total.max(1));
+    let mem_free_pct = app::pct(samples.mem_free, samples.mem_total.max(1));
 
     let swap_total_gb = samples.swap_total as f64 / GIB as f64;
     let swap_used_gb = samples.swap_used as f64 / GIB as f64;
     let swap_free = samples.swap_total.saturating_sub(samples.swap_used);
     let swap_free_gb = swap_free as f64 / GIB as f64;
 
-    let swap_used_pct = app::pct(samples.swap_used, samples.swap_total);
-    let swap_free_pct = app::pct(swap_free, samples.swap_total);
+    let swap_used_pct = app::pct(samples.swap_used, samples.swap_total.max(1));
+    let swap_free_pct = app::pct(swap_free, samples.swap_total.max(1));
 
-    let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
-        Constraint::Fill(1),
+    let [info, mem_spark, swap_spark] = Layout::vertical([
         Constraint::Length(INFO_BLOCK_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
-        Constraint::Fill(1),
     ])
     .areas(area);
 
@@ -396,6 +388,14 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
 )]
 fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
+    if samples.temperatures.is_empty() {
+        let msg = Paragraph::new(" No thermal sensor data ")
+            .style(STYLE_DARK_GRAY)
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
         Constraint::Length(TEMP_COL_WIDTH),
@@ -434,14 +434,18 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 }
 
 fn render_cores(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples) {
+    let core_count = samples.cpus.len();
+    if core_count == 0 {
+        let msg = Paragraph::new(" No per-core data available ")
+            .style(STYLE_DARK_GRAY)
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let block = Block::bordered().title(" Per-Core CPU ");
     frame.render_widget(&block, area);
     let inner = block.inner(area);
-
-    let core_count = samples.cpus.len();
-    if core_count == 0 {
-        return;
-    }
 
     let constraints = vec![Constraint::Length(SINGLE_LINE_HEIGHT); core_count];
     let chunks = Layout::vertical(&constraints).split(inner);
@@ -514,6 +518,14 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
 )]
 fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
+    if samples.disk_io.is_empty() {
+        let msg = Paragraph::new(" No disk I/O data ")
+            .style(STYLE_DARK_GRAY)
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return;
+    }
+
     let [table_area, read_spark, write_spark] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(SPARKLINE_HEIGHT),
@@ -593,7 +605,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
         |i: &NetInfo| {
             Row::new(vec![
                 Cell::from(i.name.as_str()),
-                Cell::from(Span::styled(format_bytes(i.rx_bytes, false), STYLE_YELLOW)),
+                Cell::from(Span::styled(format_bytes(i.rx_bytes, false), STYLE_GREEN)),
                 Cell::from(Span::styled(format_bytes(i.tx_bytes, false), STYLE_YELLOW)),
                 Cell::from(i.state),
                 Cell::from(i.mac.as_str()),
