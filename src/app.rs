@@ -312,6 +312,7 @@ impl App {
                 let idx = (c as u8 - b'1') as usize;
                 if idx < Tab::ALL.len() {
                     self.active_tab = Tab::ALL[idx];
+                    self.kill_state = None;
                 }
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
@@ -537,7 +538,6 @@ impl App {
 
     fn clear_selection_and_kill(&mut self) {
         if self.active_tab.is_proc() {
-            self.selected = None;
             self.kill_state = None;
         }
     }
@@ -557,6 +557,7 @@ impl App {
         let idx = self.active_tab.index();
         let n = Tab::ALL.len();
         self.active_tab = Tab::ALL[(idx + if forward { 1 } else { n - 1 }) % n];
+        self.kill_state = None;
     }
 
     /// Refreshes stored terminal dimensions; returns `false` on failure.
@@ -901,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_pid_cleared_on_down() {
+    fn selected_pid_persists_on_down() {
         let mut app = App::new();
         app.selected = Some(SelectionState {
             pid: 42,
@@ -909,11 +910,11 @@ mod tests {
         });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
+        assert!(app.selected.is_some(), "selected preserved across navigation");
     }
 
     #[test]
-    fn selected_pid_cleared_on_up() {
+    fn selected_pid_persists_on_up() {
         let mut app = App::new();
         app.selected = Some(SelectionState {
             pid: 42,
@@ -921,7 +922,7 @@ mod tests {
         });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
+        assert!(app.selected.is_some(), "selected preserved across navigation");
     }
 
     #[test]
@@ -951,7 +952,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_pid_cleared_on_page_down() {
+    fn selected_pid_persists_on_page_down() {
         let mut app = App::new();
         app.selected = Some(SelectionState {
             pid: 42,
@@ -959,7 +960,7 @@ mod tests {
         });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
+        assert!(app.selected.is_some(), "selected preserved across navigation");
     }
 
     #[test]
@@ -975,7 +976,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_pid_cleared_on_page_up() {
+    fn selected_pid_persists_on_page_up() {
         let mut app = App::new();
         app.selected = Some(SelectionState {
             pid: 42,
@@ -984,7 +985,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert!(app.selected.is_none());
+        assert!(app.selected.is_some(), "selected preserved across navigation");
     }
 
     #[test]
@@ -1744,7 +1745,7 @@ mod tests {
     // --- Mouse scroll ---
 
     #[test]
-    fn selected_pid_cleared_on_scroll() {
+    fn selected_pid_persists_on_scroll() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
         app.selected = Some(SelectionState {
@@ -1753,7 +1754,7 @@ mod tests {
         });
         app.kill_state = Some(KillState::Confirm);
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert!(app.selected.is_none(), "scroll clears selected");
+        assert!(app.selected.is_some(), "selected preserved across navigation");
         assert!(app.kill_state.is_none(), "scroll clears kill_state");
     }
 
