@@ -12,7 +12,12 @@ fn main() -> std::io::Result<()> {
     let mut samplers = samplers::Samplers::new();
 
     loop {
-        let samples = samplers.sample();
+        let refresh_proc = app.active_tab == app::Tab::Proc;
+        let samples = samplers.sample(refresh_proc);
+
+        app.proc_scroll = app
+            .proc_scroll
+            .min(samples.processes.len().saturating_sub(1));
 
         app.cpu_history.push_back(samples.cpu_usage as u64);
         if app.cpu_history.len() > 60 {
