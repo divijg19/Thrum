@@ -47,6 +47,9 @@ pub struct Samples {
     pub mem_total: u64,
     pub swap_used: u64,
     pub swap_total: u64,
+    pub load_one: f64,
+    pub load_five: f64,
+    pub load_fifteen: f64,
     pub processes: Vec<ProcessInfo>,
     pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
@@ -160,12 +163,17 @@ impl Samplers {
             uptime: System::uptime(),
         };
 
+        let load = System::load_average();
+
         Samples {
             cpu_usage: self.sys.global_cpu_usage(),
             mem_used: self.sys.used_memory(),
             mem_total: self.sys.total_memory(),
             swap_used: self.sys.used_swap(),
             swap_total: self.sys.total_swap(),
+            load_one: load.one,
+            load_five: load.five,
+            load_fifteen: load.fifteen,
             processes,
             interfaces,
             disks,
