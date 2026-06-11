@@ -31,6 +31,16 @@ fn main() -> std::io::Result<()> {
             app.cpu_history.pop_front();
         }
 
+        let mem_pct = if samples.mem_total > 0 {
+            (samples.mem_used as f64 / samples.mem_total as f64 * 100.0) as u64
+        } else {
+            0
+        };
+        app.mem_history.push_back(mem_pct);
+        if app.mem_history.len() > 60 {
+            app.mem_history.pop_front();
+        }
+
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
         if event::poll(Duration::from_secs(1))?

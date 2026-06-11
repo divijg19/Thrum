@@ -38,8 +38,9 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
-    let [_, gauges, spark, help, _] = Layout::vertical([
+    let [_, gauges, cpu_spark, mem_spark, help, _] = Layout::vertical([
         Constraint::Fill(1),
+        Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(1),
@@ -47,8 +48,12 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ])
     .areas(area);
 
-    let [cpu_area, mem_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(gauges);
+    let [cpu_area, mem_area, swap_area] = Layout::horizontal([
+        Constraint::Percentage(34),
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+    ])
+    .areas(gauges);
 
     let g = Gauge::default()
         .gauge_style(Style::new().fg(Color::Green))
@@ -68,11 +73,34 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         ));
     frame.render_widget(&mem_g, mem_area);
 
+    let (swap_pct, swap_label) = if samples.swap_total > 0 {
+        let pct = samples.swap_used as f64 / samples.swap_total as f64 * 100.0;
+        let used_gb = samples.swap_used as f64 / 1_073_741_824.0;
+        let total_gb = samples.swap_total as f64 / 1_073_741_824.0;
+        (
+            pct as u16,
+            format!("Swap: {pct:.1}%  {used_gb:.1}/{total_gb:.1} GB"),
+        )
+    } else {
+        (0, "Swap: N/A".to_string())
+    };
+    let swap_g = Gauge::default()
+        .gauge_style(Style::new().fg(Color::Yellow))
+        .percent(swap_pct)
+        .label(swap_label);
+    frame.render_widget(&swap_g, swap_area);
+
     let s = Sparkline::default()
-        .block(Block::bordered().title(" History "))
+        .block(Block::bordered().title(" CPU "))
         .data(app.cpu_history.iter())
         .style(Style::new().fg(Color::Green));
-    frame.render_widget(&s, spark);
+    frame.render_widget(&s, cpu_spark);
+
+    let ms = Sparkline::default()
+        .block(Block::bordered().title(" Memory "))
+        .data(app.mem_history.iter())
+        .style(Style::new().fg(Color::Cyan));
+    frame.render_widget(&ms, mem_spark);
 
     let h = Paragraph::new("press q to quit")
         .alignment(Alignment::Center)
