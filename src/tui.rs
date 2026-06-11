@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
-use ratatui::Frame;
 
 use crate::app::{App, Tab};
 use crate::samplers::Samples;
@@ -46,11 +46,8 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     ])
     .areas(area);
 
-    let [cpu_area, mem_area] = Layout::horizontal([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .areas(gauges);
+    let [cpu_area, mem_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(gauges);
 
     let g = Gauge::default()
         .gauge_style(Style::new().fg(Color::Green))
@@ -66,8 +63,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .gauge_style(Style::new().fg(Color::Cyan))
         .percent(mem_pct)
         .label(format!(
-            "Mem: {:.1}%  {:.1}/{:.1} GB",
-            mem_pct_f, mem_used_gb, mem_total_gb
+            "Mem: {mem_pct_f:.1}%  {mem_used_gb:.1}/{mem_total_gb:.1} GB"
         ));
     frame.render_widget(&mem_g, mem_area);
 
@@ -89,9 +85,9 @@ fn format_rate(bytes: u64) -> String {
     } else if bytes >= 1_000 {
         format!("{:.1}KB/s", bytes as f64 / 1_000.0)
     } else {
-        format!("{}B/s", bytes)
+        format!("{bytes}B/s")
     };
-    format!("{:>12}", s)
+    format!("{s:>12}")
 }
 
 fn format_disk_size(bytes: u64) -> String {
@@ -103,8 +99,56 @@ fn format_disk_size(bytes: u64) -> String {
     } else if b >= 1_048_576.0 {
         format!("{:.0}MB", b / 1_048_576.0)
     } else {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     }
+}
+
+fn format_uptime(secs: u64) -> String {
+    let d = secs / 86400;
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    if d > 0 {
+        format!("{d}d {h}h {m}m")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{m}m")
+    }
+}
+
+fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Hostname    ", Style::new().bold()),
+            Span::raw(&samples.sys_info.hostname),
+        ]),
+        Line::from(vec![
+            Span::styled("OS          ", Style::new().bold()),
+            Span::raw(&samples.sys_info.os),
+        ]),
+        Line::from(vec![
+            Span::styled("Kernel      ", Style::new().bold()),
+            Span::raw(&samples.sys_info.kernel),
+        ]),
+        Line::from(vec![
+            Span::styled("Arch        ", Style::new().bold()),
+            Span::raw(&samples.sys_info.arch),
+        ]),
+        Line::from(vec![
+            Span::styled("Uptime      ", Style::new().bold()),
+            Span::raw(format_uptime(samples.sys_info.uptime)),
+        ]),
+    ];
+
+    let [_, info, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(5),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
+    let p = Paragraph::new(lines).fg(Color::Gray);
+    frame.render_widget(&p, info);
 }
 
 fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -142,7 +186,9 @@ fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
         .collect();
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Mount", "FS", "Size", "Avail", "Use%", "Kind"]))
+        .header(Row::new(vec![
+            "Mount", "FS", "Size", "Avail", "Use%", "Kind",
+        ]))
         .block(Block::bordered().title(" Filesystems "));
     frame.render_widget(table, area);
 }
@@ -221,20 +267,6 @@ fn render_proc(frame: &mut Frame, area: Rect, samples: &Samples, scroll: usize) 
     frame.render_widget(table, area);
 }
 
-fn render_placeholder(frame: &mut Frame, area: Rect, message: &str) {
-    let [_, text, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(1),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-
-    let p = Paragraph::new(message)
-        .alignment(Alignment::Center)
-        .gray();
-    frame.render_widget(&p, text);
-}
-
 pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     let block = if app.sidebar_visible {
         Block::bordered().title(" Thrum ")
@@ -245,11 +277,8 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     let inner = block.inner(frame.area());
 
     let content_area = if app.sidebar_visible {
-        let [sidebar_area, content_area] = Layout::horizontal([
-            Constraint::Length(8),
-            Constraint::Fill(1),
-        ])
-        .areas(inner);
+        let [sidebar_area, content_area] =
+            Layout::horizontal([Constraint::Length(8), Constraint::Fill(1)]).areas(inner);
         render_sidebar(frame, sidebar_area, app);
         content_area
     } else {
@@ -261,6 +290,81 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll),
         Tab::Net => render_net(frame, content_area, samples),
         Tab::Files => render_files(frame, content_area, samples),
-        Tab::Time => render_placeholder(frame, content_area, "System info - v0.0.8"),
+        Tab::Time => render_time(frame, content_area, samples),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_rate_zero() {
+        assert_eq!(format_rate(0), format!("{:>12}", "0B/s"));
+    }
+
+    #[test]
+    fn format_rate_bytes() {
+        assert_eq!(format_rate(500), format!("{:>12}", "500B/s"));
+    }
+
+    #[test]
+    fn format_rate_kilobytes() {
+        assert_eq!(format_rate(1500), format!("{:>12}", "1.5KB/s"));
+    }
+
+    #[test]
+    fn format_rate_megabytes() {
+        assert_eq!(format_rate(2_000_000), format!("{:>12}", "2.0MB/s"));
+    }
+
+    #[test]
+    fn format_disk_size_bytes() {
+        assert_eq!(format_disk_size(500), "500B");
+    }
+
+    #[test]
+    fn format_disk_size_megabytes() {
+        assert_eq!(format_disk_size(1_048_576), "1MB");
+    }
+
+    #[test]
+    fn format_disk_size_gigabytes() {
+        assert_eq!(format_disk_size(1_073_741_824), "1.0GB");
+    }
+
+    #[test]
+    fn format_disk_size_terabytes() {
+        let two_tb = 2 * 1_099_511_627_776;
+        assert_eq!(format_disk_size(two_tb), "2.0TB");
+    }
+
+    #[test]
+    fn format_uptime_minutes() {
+        assert_eq!(format_uptime(0), "0m");
+        assert_eq!(format_uptime(30), "0m");
+        assert_eq!(format_uptime(119), "1m");
+        assert_eq!(format_uptime(120), "2m");
+    }
+
+    #[test]
+    fn format_uptime_hours() {
+        assert_eq!(format_uptime(3600), "1h 0m");
+        assert_eq!(format_uptime(3661), "1h 1m");
+    }
+
+    #[test]
+    fn format_uptime_days() {
+        assert_eq!(format_uptime(86400), "1d 0h 0m");
+        assert_eq!(format_uptime(90061), "1d 1h 1m");
+    }
+
+    #[test]
+    fn tab_color_matches_tab() {
+        assert_eq!(tab_color(Tab::Dash), Color::Green);
+        assert_eq!(tab_color(Tab::Proc), Color::Cyan);
+        assert_eq!(tab_color(Tab::Net), Color::Yellow);
+        assert_eq!(tab_color(Tab::Files), Color::Magenta);
+        assert_eq!(tab_color(Tab::Time), Color::Gray);
     }
 }

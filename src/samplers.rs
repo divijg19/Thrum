@@ -26,6 +26,14 @@ pub struct DiskInfo {
     pub kind: String,
 }
 
+pub struct SysInfo {
+    pub hostname: String,
+    pub os: String,
+    pub kernel: String,
+    pub arch: String,
+    pub uptime: u64,
+}
+
 pub struct Samples {
     pub cpu_usage: f32,
     pub mem_used: u64,
@@ -33,6 +41,7 @@ pub struct Samples {
     pub processes: Vec<ProcessInfo>,
     pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
+    pub sys_info: SysInfo,
 }
 
 pub struct Samplers {
@@ -78,7 +87,7 @@ impl Samplers {
             .networks
             .iter()
             .map(|(name, data)| NetInfo {
-                name: name.to_string(),
+                name: name.clone(),
                 rx_bytes: data.received(),
                 tx_bytes: data.transmitted(),
                 state: match data.operational_state() {
@@ -117,6 +126,14 @@ impl Samplers {
 
         disks.sort_by(|a, b| a.mount.cmp(&b.mount));
 
+        let sys_info = SysInfo {
+            hostname: System::host_name().unwrap_or_default(),
+            os: System::long_os_version().unwrap_or_default(),
+            kernel: System::kernel_version().unwrap_or_default(),
+            arch: System::cpu_arch(),
+            uptime: System::uptime(),
+        };
+
         Samples {
             cpu_usage: self.sys.global_cpu_usage(),
             mem_used: self.sys.used_memory(),
@@ -124,6 +141,26 @@ impl Samplers {
             processes,
             interfaces,
             disks,
+            sys_info,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sys_info_fields_have_expected_types() {
+        let info = SysInfo {
+            hostname: String::from("test"),
+            os: String::from("test"),
+            kernel: String::from("test"),
+            arch: String::from("x86_64"),
+            uptime: 86400,
+        };
+        assert_eq!(info.hostname, "test");
+        assert_eq!(info.arch, "x86_64");
+        assert_eq!(info.uptime, 86400);
     }
 }
