@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{App, Tab};
+use crate::app::{App, ProcSortField, Tab};
 use crate::samplers::{ProcessInfo, Samples};
 
 fn tab_color(tab: Tab) -> Color {
@@ -304,6 +304,14 @@ fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
     frame.render_widget(table, area);
 }
 
+fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'static str {
+    if field != sort_field {
+        return "";
+    }
+    if asc { "\u{2191}" } else { "\u{2193}" }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_proc(
     frame: &mut Frame,
     area: Rect,
@@ -311,6 +319,8 @@ fn render_proc(
     scroll: usize,
     query: &str,
     searching: bool,
+    sort_field: ProcSortField,
+    sort_asc: bool,
 ) {
     let has_query = !query.is_empty();
     let (search_area, table_area) = if has_query || searching {
@@ -332,7 +342,7 @@ fn render_proc(
         frame.render_widget(&block, sa);
     }
 
-    let filtered: Vec<&ProcessInfo> = if has_query {
+    let mut filtered: Vec<&ProcessInfo> = if has_query {
         let q = query.to_lowercase();
         samples
             .processes
@@ -342,6 +352,16 @@ fn render_proc(
     } else {
         samples.processes.iter().collect()
     };
+
+    filtered.sort_unstable_by(|a, b| {
+        let ord = match sort_field {
+            ProcSortField::Name => a.name.cmp(&b.name),
+            ProcSortField::Pid => a.pid.cmp(&b.pid),
+            ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
+            ProcSortField::Memory => a.memory.cmp(&b.memory),
+        };
+        if sort_asc { ord } else { ord.reverse() }
+    });
 
     let count = filtered.len();
     let scroll = scroll.min(count.saturating_sub(1));
@@ -380,7 +400,13 @@ fn render_proc(
         .collect();
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec!["Name", "PID", "CPU%", "Memory", "Status"]))
+        .header(Row::new(vec![
+            format!("Name{}", sort_arrow(ProcSortField::Name, sort_field, sort_asc)),
+            format!("PID{}", sort_arrow(ProcSortField::Pid, sort_field, sort_asc)),
+            format!("CPU%{}", sort_arrow(ProcSortField::Cpu, sort_field, sort_asc)),
+            format!("Memory{}", sort_arrow(ProcSortField::Memory, sort_field, sort_asc)),
+            "Status".to_string(),
+        ]))
         .block(Block::bordered().title(" Processes "));
     frame.render_widget(table, table_area);
 }
@@ -405,7 +431,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
-        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll, &app.proc_query, app.proc_search_focused),
+        Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll, &app.proc_query, app.proc_search_focused, app.proc_sort_field, app.proc_sort_asc),
         Tab::Net => render_net(frame, content_area, samples),
         Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_time(frame, content_area, samples),
