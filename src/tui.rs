@@ -14,6 +14,7 @@ fn tab_color(tab: Tab) -> Color {
         Tab::Net => Color::Yellow,
         Tab::Files => Color::Magenta,
         Tab::Time => Color::Gray,
+        Tab::Temp => Color::Red,
     }
 }
 
@@ -21,7 +22,7 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
     let border = Block::default().borders(Borders::RIGHT);
     frame.render_widget(&border, area);
 
-    let mut lines = Vec::with_capacity(5);
+    let mut lines = Vec::with_capacity(Tab::ALL.len());
     for tab in Tab::ALL {
         let is_active = tab == app.active_tab;
         let indicator = if is_active { "\u{25b6}" } else { "\u{25cb}" };
@@ -103,6 +104,13 @@ fn format_disk_size(bytes: u64) -> String {
     }
 }
 
+fn format_temp(temp: Option<f32>) -> String {
+    match temp.filter(|t| t.is_finite()) {
+        Some(t) => format!("{:>8}", format!("{:.1}°C", t)),
+        None => format!("{:>8}", "N/A"),
+    }
+}
+
 fn format_uptime(secs: u64) -> String {
     let d = secs / 86400;
     let h = (secs % 86400) / 3600;
@@ -149,6 +157,36 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
 
     let p = Paragraph::new(lines).fg(Color::Gray);
     frame.render_widget(&p, info);
+}
+
+fn render_temp(frame: &mut Frame, area: Rect, samples: &Samples) {
+    let widths: [Constraint; 4] = [
+        Constraint::Fill(1),
+        Constraint::Length(8),
+        Constraint::Length(8),
+        Constraint::Length(8),
+    ];
+
+    let rows: Vec<Row> = samples
+        .temperatures
+        .iter()
+        .map(|t| {
+            Row::new(vec![
+                Cell::from(t.label.as_str()),
+                Cell::from(Span::styled(
+                    format_temp(t.temperature),
+                    Style::new().fg(Color::Red),
+                )),
+                Cell::from(format_temp(t.max)),
+                Cell::from(format_temp(t.critical)),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec!["Sensor", "Temp", "Max", "Critical"]))
+        .block(Block::bordered().title(" Temperature "));
+    frame.render_widget(table, area);
 }
 
 fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -291,6 +329,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Net => render_net(frame, content_area, samples),
         Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_time(frame, content_area, samples),
+        Tab::Temp => render_temp(frame, content_area, samples),
     }
 }
 
@@ -366,5 +405,27 @@ mod tests {
         assert_eq!(tab_color(Tab::Net), Color::Yellow);
         assert_eq!(tab_color(Tab::Files), Color::Magenta);
         assert_eq!(tab_color(Tab::Time), Color::Gray);
+        assert_eq!(tab_color(Tab::Temp), Color::Red);
+    }
+
+    #[test]
+    fn format_temp_value() {
+        assert_eq!(format_temp(Some(65.0)), "  65.0°C");
+        assert_eq!(format_temp(Some(0.0)), "   0.0°C");
+    }
+
+    #[test]
+    fn format_temp_none() {
+        assert_eq!(format_temp(None), "     N/A");
+    }
+
+    #[test]
+    fn format_temp_nan() {
+        assert_eq!(format_temp(Some(f32::NAN)), "     N/A");
+    }
+
+    #[test]
+    fn format_temp_large() {
+        assert_eq!(format_temp(Some(100.5)), " 100.5°C");
     }
 }
