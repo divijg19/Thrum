@@ -14,9 +14,12 @@ mod samplers;
 mod tui;
 
 fn main() -> std::io::Result<()> {
+    let cfg = app::parse_args();
     let mut terminal = ratatui::init();
     let mut app = app::App::new();
+    app.apply_config(&cfg);
     let mut samplers = samplers::Samplers::new();
+    let refresh = Duration::from_millis(cfg.refresh_ms);
 
     loop {
         let refresh_proc = app.active_tab == app::Tab::Proc;
@@ -36,7 +39,7 @@ fn main() -> std::io::Result<()> {
 
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
-        if event::poll(Duration::from_secs(1))?
+        if event::poll(refresh)?
             && let Event::Key(key) = event::read()?
         {
             app.handle_key(key);

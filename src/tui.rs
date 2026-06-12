@@ -19,8 +19,9 @@ fn tab_color(tab: Tab) -> Color {
 }
 
 fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
-    let border = Block::default().borders(Borders::RIGHT);
-    frame.render_widget(&border, area);
+    let block = Block::default().borders(Borders::RIGHT);
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
 
     let mut lines = Vec::with_capacity(Tab::ALL.len());
     for tab in Tab::ALL {
@@ -34,16 +35,15 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
         let label = format!("{} {:<5}", indicator, tab.label());
         lines.push(Line::from(Span::styled(label, style)));
     }
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
-    let [_, gauges, cpu_spark, mem_spark, load, help, _] = Layout::vertical([
+    let [_, gauges, cpu_spark, mem_spark, load, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(3),
-        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
     ])
@@ -113,11 +113,6 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     .alignment(Alignment::Center)
     .gray();
     frame.render_widget(&l, load);
-
-    let h = Paragraph::new("press q to quit")
-        .alignment(Alignment::Center)
-        .gray();
-    frame.render_widget(&h, help);
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -449,6 +444,44 @@ fn render_proc(
     frame.render_widget(table, table_area);
 }
 
+fn render_help(frame: &mut Frame, area: Rect) {
+    let lines = vec![
+        Line::from(""),
+        Line::from("  ?            Toggle help           Ctrl+S          Toggle sidebar"),
+        Line::from("  Tab          Next tab               Shift+Tab       Previous tab"),
+        Line::from("  1-6          Jump to tab"),
+        Line::from("  /            Search (Proc tab)      Esc/Enter       Cancel/Confirm"),
+        Line::from("  n            Sort by name            p               Sort by PID"),
+        Line::from("  c            Sort by CPU             m               Sort by memory"),
+        Line::from(
+            "  r            Toggle sort order       \u{2191}/\u{2193}            Scroll (Proc)",
+        ),
+        Line::from("  q            Quit"),
+        Line::from(""),
+        Line::from("  Press ? to close"),
+    ];
+
+    let height = lines.len() as u16 + 2;
+    let [_, inner, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
+    let [_, centered, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Min(48),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+
+    let p = Paragraph::new(lines)
+        .block(Block::bordered().title(" Help "))
+        .fg(Color::Gray);
+    frame.render_widget(&p, centered);
+}
+
 pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     let block = if app.sidebar_visible {
         Block::bordered().title(" Thrum ")
@@ -467,11 +500,14 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         inner
     };
 
+    let [tab_area, status_area] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(content_area);
+
     match app.active_tab {
-        Tab::Dash => render_dash(frame, content_area, app, samples),
+        Tab::Dash => render_dash(frame, tab_area, app, samples),
         Tab::Proc => render_proc(
             frame,
-            content_area,
+            tab_area,
             samples,
             app.proc_scroll,
             &app.proc_query,
@@ -479,10 +515,22 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
             app.proc_sort_field,
             app.proc_sort_asc,
         ),
-        Tab::Net => render_net(frame, content_area, app, samples),
-        Tab::Files => render_files(frame, content_area, samples),
-        Tab::Time => render_time(frame, content_area, samples),
-        Tab::Temp => render_temp(frame, content_area, samples),
+        Tab::Net => render_net(frame, tab_area, app, samples),
+        Tab::Files => render_files(frame, tab_area, samples),
+        Tab::Time => render_time(frame, tab_area, samples),
+        Tab::Temp => render_temp(frame, tab_area, samples),
+    }
+
+    let status = Paragraph::new(if app.help_visible {
+        " ? Close help"
+    } else {
+        " ? Help | q Quit | Tab | Shift+Tab | Ctrl+S Sidebar"
+    })
+    .fg(Color::Gray);
+    frame.render_widget(&status, status_area);
+
+    if app.help_visible {
+        render_help(frame, tab_area);
     }
 }
 

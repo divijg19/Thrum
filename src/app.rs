@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::env;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -56,6 +57,7 @@ pub struct App {
     pub proc_sort_field: ProcSortField,
     pub proc_sort_asc: bool,
     pub should_quit: bool,
+    pub help_visible: bool,
 }
 
 impl App {
@@ -73,7 +75,13 @@ impl App {
             proc_sort_field: ProcSortField::Cpu,
             proc_sort_asc: false,
             should_quit: false,
+            help_visible: false,
         }
+    }
+
+    pub fn apply_config(&mut self, cfg: &Config) {
+        self.active_tab = cfg.default_tab;
+        self.sidebar_visible = !cfg.hide_sidebar;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -105,8 +113,16 @@ impl App {
             }
         }
 
+        if self.help_visible {
+            self.help_visible = false;
+            if key.code == KeyCode::Char('?') {
+                return;
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
+            KeyCode::Char('?') => self.help_visible = !self.help_visible,
             KeyCode::Tab => {
                 let idx = Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap();
                 self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
@@ -157,9 +173,84 @@ impl App {
     }
 }
 
+pub struct Config {
+    pub refresh_ms: u64,
+    pub default_tab: Tab,
+    pub hide_sidebar: bool,
+}
+
+pub fn parse_args() -> Config {
+    let mut refresh_ms = 1000u64;
+    let mut default_tab = Tab::Dash;
+    let mut hide_sidebar = false;
+
+    let mut i = 1;
+    let args: Vec<String> = env::args().collect();
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                eprintln!("Usage: thrum [OPTIONS]");
+                eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
+                eprintln!("  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp)");
+                eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
+                eprintln!("  --help                Show this help");
+                std::process::exit(0);
+            }
+            "-r" | "--refresh" => {
+                i += 1;
+                let val = args.get(i).unwrap_or_else(|| {
+                    eprintln!("error: --refresh requires a value");
+                    std::process::exit(1);
+                });
+                refresh_ms = val.parse().unwrap_or_else(|_| {
+                    eprintln!("error: --refresh must be a positive integer");
+                    std::process::exit(1);
+                });
+                if refresh_ms == 0 {
+                    eprintln!("error: --refresh must be > 0");
+                    std::process::exit(1);
+                }
+            }
+            "-t" | "--tab" => {
+                i += 1;
+                let name = args.get(i).unwrap_or_else(|| {
+                    eprintln!("error: --tab requires a value");
+                    std::process::exit(1);
+                });
+                default_tab = match name.to_lowercase().as_str() {
+                    "dash" => Tab::Dash,
+                    "proc" => Tab::Proc,
+                    "net" => Tab::Net,
+                    "files" => Tab::Files,
+                    "time" => Tab::Time,
+                    "temp" => Tab::Temp,
+                    _ => {
+                        eprintln!("error: unknown tab '{name}'");
+                        std::process::exit(1);
+                    }
+                };
+            }
+            "-s" | "--no-sidebar" => {
+                hide_sidebar = true;
+            }
+            _ => {
+                eprintln!("error: unknown flag '{}'", args[i]);
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    Config {
+        refresh_ms,
+        default_tab,
+        hide_sidebar,
+    }
+}
+
 pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
     deque.push_back(value);
-    if deque.len() > max {
+    if deque.len() >= max {
         deque.pop_front();
     }
 }
@@ -414,5 +505,52 @@ mod tests {
         assert!(!app.should_quit);
         assert_eq!(app.active_tab, Tab::Dash);
         assert!(app.sidebar_visible);
+    }
+
+    #[test]
+    fn help_toggle_opens_and_closes() {
+        let mut app = App::new();
+        assert!(!app.help_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(app.help_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(!app.help_visible);
+    }
+
+    #[test]
+    fn help_closes_on_any_key() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(app.help_visible);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(!app.help_visible);
+        assert_eq!(app.active_tab, Tab::Proc);
+    }
+
+    #[test]
+    fn apply_config_sets_active_tab() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        let cfg = Config {
+            refresh_ms: 500,
+            default_tab: Tab::Proc,
+            hide_sidebar: false,
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.active_tab, Tab::Proc);
+        assert!(app.sidebar_visible);
+    }
+
+    #[test]
+    fn apply_config_hides_sidebar() {
+        let mut app = App::new();
+        assert!(app.sidebar_visible);
+        let cfg = Config {
+            refresh_ms: 1000,
+            default_tab: Tab::Dash,
+            hide_sidebar: true,
+        };
+        app.apply_config(&cfg);
+        assert!(!app.sidebar_visible);
     }
 }
