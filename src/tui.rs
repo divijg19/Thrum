@@ -121,7 +121,11 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 }
 
 fn format_bytes(bytes: u64) -> String {
-    let s = if bytes >= 1_000_000 {
+    let s = if bytes >= 1_000_000_000_000 {
+        format!("{:.1}TB", bytes as f64 / 1_000_000_000_000.0)
+    } else if bytes >= 1_000_000_000 {
+        format!("{:.1}GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
         format!("{:.1}MB", bytes as f64 / 1_000_000.0)
     } else if bytes >= 1_000 {
         format!("{:.1}KB", bytes as f64 / 1_000.0)
@@ -437,7 +441,11 @@ fn render_proc(
             ),
             "Status".to_string(),
         ]))
-        .block(Block::bordered().title(" Processes "));
+        .block(Block::bordered().title(format!(
+            " Processes ({}/{}) ",
+            filtered.len(),
+            samples.processes.len(),
+        )));
     frame.render_widget(table, table_area);
 }
 
@@ -500,6 +508,16 @@ mod tests {
     #[test]
     fn format_bytes_megabytes() {
         assert_eq!(format_bytes(2_000_000), format!("{:>12}", "2.0MB"));
+    }
+
+    #[test]
+    fn format_bytes_gigabytes() {
+        assert_eq!(format_bytes(2_000_000_000), format!("{:>12}", "2.0GB"));
+    }
+
+    #[test]
+    fn format_bytes_terabytes() {
+        assert_eq!(format_bytes(2_000_000_000_000), format!("{:>12}", "2.0TB"));
     }
 
     #[test]
