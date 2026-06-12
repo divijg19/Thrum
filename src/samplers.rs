@@ -32,6 +32,12 @@ pub struct SysInfo {
     pub uptime: u64,
 }
 
+pub struct CpuInfo {
+    pub label: String,
+    pub usage: f32,
+    pub freq: u64,
+}
+
 pub struct TempInfo {
     pub label: String,
     pub temperature: Option<f32>,
@@ -53,6 +59,7 @@ pub struct Samples {
     pub processes: Vec<ProcessInfo>,
     pub interfaces: Vec<NetInfo>,
     pub disks: Vec<DiskInfo>,
+    pub cpus: Vec<CpuInfo>,
     pub temperatures: Vec<TempInfo>,
     pub sys_info: SysInfo,
 }
@@ -193,6 +200,17 @@ impl Samplers {
             uptime: System::uptime(),
         };
 
+        let cpus: Vec<CpuInfo> = self
+            .sys
+            .cpus()
+            .iter()
+            .map(|c| CpuInfo {
+                label: c.name().to_string(),
+                usage: c.cpu_usage(),
+                freq: c.frequency(),
+            })
+            .collect();
+
         let load = System::load_average();
 
         Samples {
@@ -209,6 +227,7 @@ impl Samplers {
             processes,
             interfaces,
             disks,
+            cpus,
             temperatures,
             sys_info,
         }
@@ -231,5 +250,17 @@ mod tests {
         assert_eq!(info.hostname, "test");
         assert_eq!(info.arch, "x86_64");
         assert_eq!(info.uptime, 86400);
+    }
+
+    #[test]
+    fn cpu_info_fields() {
+        let info = CpuInfo {
+            label: String::from("cpu0"),
+            usage: 42.5,
+            freq: 3400,
+        };
+        assert_eq!(info.label, "cpu0");
+        assert!((info.usage - 42.5).abs() < f32::EPSILON);
+        assert_eq!(info.freq, 3400);
     }
 }
