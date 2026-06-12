@@ -21,7 +21,14 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [Tab::Dash, Tab::Proc, Tab::Net, Tab::Files, Tab::Time, Tab::Temp];
+    pub const ALL: [Tab; 6] = [
+        Tab::Dash,
+        Tab::Proc,
+        Tab::Net,
+        Tab::Files,
+        Tab::Time,
+        Tab::Temp,
+    ];
 
     pub fn label(&self) -> &str {
         match self {
@@ -139,10 +146,21 @@ impl App {
             KeyCode::Char('r') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
                 self.proc_sort_asc = !self.proc_sort_asc;
             }
-            KeyCode::Up => self.proc_scroll = self.proc_scroll.saturating_sub(1),
-            KeyCode::Down => self.proc_scroll = self.proc_scroll.saturating_add(1),
+            KeyCode::Up if self.active_tab == Tab::Proc => {
+                self.proc_scroll = self.proc_scroll.saturating_sub(1);
+            }
+            KeyCode::Down if self.active_tab == Tab::Proc => {
+                self.proc_scroll = self.proc_scroll.saturating_add(1);
+            }
             _ => {}
         }
+    }
+}
+
+pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
+    deque.push_back(value);
+    if deque.len() > max {
+        deque.pop_front();
     }
 }
 
@@ -264,6 +282,7 @@ mod tests {
     #[test]
     fn key_up_down_scrolls_proc() {
         let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         assert_eq!(app.proc_scroll, 0);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(app.proc_scroll, 1);
