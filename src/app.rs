@@ -41,6 +41,8 @@ pub struct App {
     pub sidebar_visible: bool,
     pub cpu_history: VecDeque<u64>,
     pub mem_history: VecDeque<u64>,
+    pub net_rx_history: VecDeque<u64>,
+    pub net_tx_history: VecDeque<u64>,
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
@@ -56,6 +58,8 @@ impl App {
             sidebar_visible: true,
             cpu_history: VecDeque::with_capacity(60),
             mem_history: VecDeque::with_capacity(60),
+            net_rx_history: VecDeque::with_capacity(60),
+            net_tx_history: VecDeque::with_capacity(60),
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
@@ -172,6 +176,8 @@ mod tests {
         assert!(app.proc_query.is_empty());
         assert!(!app.proc_search_focused);
         assert_eq!(app.mem_history.len(), 0);
+        assert_eq!(app.net_rx_history.len(), 0);
+        assert_eq!(app.net_tx_history.len(), 0);
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
     }

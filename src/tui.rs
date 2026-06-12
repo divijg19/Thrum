@@ -271,7 +271,14 @@ fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
     frame.render_widget(table, area);
 }
 
-fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
+fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+    let [table_area, rx_spark, tx_spark] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+
     let rows: Vec<Row> = samples
         .interfaces
         .iter()
@@ -301,7 +308,19 @@ fn render_net(frame: &mut Frame, area: Rect, samples: &Samples) {
     let table = Table::new(rows, widths)
         .header(Row::new(vec!["Interface", "RX/s", "TX/s", "State"]))
         .block(Block::bordered().title(" Network I/O "));
-    frame.render_widget(table, area);
+    frame.render_widget(table, table_area);
+
+    let rs = Sparkline::default()
+        .block(Block::bordered().title(" RX "))
+        .data(app.net_rx_history.iter())
+        .style(Style::new().fg(Color::Green));
+    frame.render_widget(&rs, rx_spark);
+
+    let ts = Sparkline::default()
+        .block(Block::bordered().title(" TX "))
+        .data(app.net_tx_history.iter())
+        .style(Style::new().fg(Color::Yellow));
+    frame.render_widget(&ts, tx_spark);
 }
 
 fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'static str {
@@ -432,7 +451,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
     match app.active_tab {
         Tab::Dash => render_dash(frame, content_area, app, samples),
         Tab::Proc => render_proc(frame, content_area, samples, app.proc_scroll, &app.proc_query, app.proc_search_focused, app.proc_sort_field, app.proc_sort_asc),
-        Tab::Net => render_net(frame, content_area, samples),
+        Tab::Net => render_net(frame, content_area, app, samples),
         Tab::Files => render_files(frame, content_area, samples),
         Tab::Time => render_time(frame, content_area, samples),
         Tab::Temp => render_temp(frame, content_area, samples),

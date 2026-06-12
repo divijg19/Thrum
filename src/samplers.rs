@@ -45,6 +45,8 @@ pub struct Samples {
     pub mem_total: u64,
     pub swap_used: u64,
     pub swap_total: u64,
+    pub net_rx_rate: u64,
+    pub net_tx_rate: u64,
     pub load_one: f64,
     pub load_five: f64,
     pub load_fifteen: f64,
@@ -60,18 +62,26 @@ pub struct Samplers {
     networks: Networks,
     disks: Disks,
     components: Components,
+    prev_net_rx: u64,
+    prev_net_tx: u64,
 }
 
 impl Samplers {
     pub fn new() -> Self {
+        let networks = Networks::new_with_refreshed_list();
+        let prev_net_rx = networks.values().map(sysinfo::NetworkData::received).sum();
+        let prev_net_tx = networks.values().map(sysinfo::NetworkData::transmitted).sum();
         Self {
             sys: System::new(),
-            networks: Networks::new_with_refreshed_list(),
+            networks,
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
+            prev_net_rx,
+            prev_net_tx,
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn sample(&mut self, refresh_proc: bool) -> Samples {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -113,6 +123,13 @@ impl Samplers {
             .collect();
 
         interfaces.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let current_rx: u64 = interfaces.iter().map(|i| i.rx_bytes).sum();
+        let current_tx: u64 = interfaces.iter().map(|i| i.tx_bytes).sum();
+        let net_rx_rate = current_rx.saturating_sub(self.prev_net_rx);
+        let net_tx_rate = current_tx.saturating_sub(self.prev_net_tx);
+        self.prev_net_rx = current_rx;
+        self.prev_net_tx = current_tx;
 
         let mut disks: Vec<DiskInfo> = self
             .disks
@@ -167,6 +184,8 @@ impl Samplers {
             mem_total: self.sys.total_memory(),
             swap_used: self.sys.used_swap(),
             swap_total: self.sys.total_swap(),
+            net_rx_rate,
+            net_tx_rate,
             load_one: load.one,
             load_five: load.five,
             load_fifteen: load.fifteen,
