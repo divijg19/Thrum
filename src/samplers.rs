@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use sysinfo::{
     Components, Disks, InterfaceOperationalState, Networks, ProcessStatus, ProcessesToUpdate,
     System,
@@ -79,8 +81,8 @@ pub struct Samplers {
     networks: Networks,
     disks: Disks,
     components: Components,
-    prev_net_rx: u64,
-    prev_net_tx: u64,
+    prev_iface_rx: HashMap<String, u64>,
+    prev_iface_tx: HashMap<String, u64>,
     hostname: String,
     os: String,
     kernel: String,
@@ -90,21 +92,19 @@ pub struct Samplers {
 impl Samplers {
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
-        let prev_net_rx = networks
-            .values()
-            .map(sysinfo::NetworkData::total_received)
-            .sum();
-        let prev_net_tx = networks
-            .values()
-            .map(sysinfo::NetworkData::total_transmitted)
-            .sum();
+        let mut prev_iface_rx = HashMap::new();
+        let mut prev_iface_tx = HashMap::new();
+        for (name, data) in &networks {
+            prev_iface_rx.insert(name.clone(), data.total_received());
+            prev_iface_tx.insert(name.clone(), data.total_transmitted());
+        }
         Self {
             sys: System::new(),
             networks,
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
-            prev_net_rx,
-            prev_net_tx,
+            prev_iface_rx,
+            prev_iface_tx,
             hostname: System::host_name().unwrap_or_default(),
             os: System::long_os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_default(),
@@ -139,31 +139,50 @@ impl Samplers {
             vec![]
         };
 
-        let mut interfaces: Vec<NetInfo> = self
+        let mut raw: Vec<(String, u64, u64, InterfaceOperationalState)> = self
             .networks
             .iter()
-            .map(|(name, data)| NetInfo {
-                name: name.clone(),
-                rx_bytes: data.total_received(),
-                tx_bytes: data.total_transmitted(),
-                state: match data.operational_state() {
+            .map(|(name, data)| {
+                (
+                    name.clone(),
+                    data.total_received(),
+                    data.total_transmitted(),
+                    data.operational_state(),
+                )
+            })
+            .collect();
+        raw.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut interfaces = Vec::with_capacity(raw.len());
+        let mut net_rx_rate = 0u64;
+        let mut net_tx_rate = 0u64;
+        for (name, rx_cum, tx_cum, state) in raw {
+            let prev_rx = self.prev_iface_rx.entry(name.clone()).or_insert(rx_cum);
+            let prev_tx = self.prev_iface_tx.entry(name.clone()).or_insert(tx_cum);
+            let rx_rate = rx_cum.saturating_sub(*prev_rx);
+            let tx_rate = tx_cum.saturating_sub(*prev_tx);
+            net_rx_rate += rx_rate;
+            net_tx_rate += tx_rate;
+            *prev_rx = rx_cum;
+            *prev_tx = tx_cum;
+            interfaces.push(NetInfo {
+                name,
+                rx_bytes: rx_rate,
+                tx_bytes: tx_rate,
+                state: match state {
                     InterfaceOperationalState::Up => "Up",
                     InterfaceOperationalState::Down => "Down",
                     InterfaceOperationalState::LowerLayerDown => "LLDown",
                     _ => "?",
                 }
                 .to_string(),
-            })
-            .collect();
+            });
+        }
 
-        interfaces.sort_by(|a, b| a.name.cmp(&b.name));
-
-        let current_rx: u64 = interfaces.iter().map(|i| i.rx_bytes).sum();
-        let current_tx: u64 = interfaces.iter().map(|i| i.tx_bytes).sum();
-        let net_rx_rate = current_rx.saturating_sub(self.prev_net_rx);
-        let net_tx_rate = current_tx.saturating_sub(self.prev_net_tx);
-        self.prev_net_rx = current_rx;
-        self.prev_net_tx = current_tx;
+        self.prev_iface_rx
+            .retain(|k, _| interfaces.iter().any(|i| i.name == *k));
+        self.prev_iface_tx
+            .retain(|k, _| interfaces.iter().any(|i| i.name == *k));
 
         let mut disks: Vec<DiskInfo> = self
             .disks
@@ -312,5 +331,19 @@ mod tests {
         assert_eq!(info.mount_point, "/");
         assert_eq!(info.read_rate, 1024);
         assert_eq!(info.write_rate, 2048);
+    }
+
+    #[test]
+    fn net_info_rate_fields() {
+        let info = NetInfo {
+            name: String::from("eth0"),
+            rx_bytes: 1024,
+            tx_bytes: 2048,
+            state: String::from("Up"),
+        };
+        assert_eq!(info.name, "eth0");
+        assert_eq!(info.rx_bytes, 1024);
+        assert_eq!(info.tx_bytes, 2048);
+        assert_eq!(info.state, "Up");
     }
 }

@@ -3,6 +3,8 @@ use std::env;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+pub const PAGE_SIZE: usize = 10;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcSortField {
     Name,
@@ -185,6 +187,12 @@ impl App {
             }
             KeyCode::Down if self.active_tab == Tab::Proc => {
                 self.proc_scroll = self.proc_scroll.saturating_add(1);
+            }
+            KeyCode::PageUp if self.active_tab == Tab::Proc => {
+                self.proc_scroll = self.proc_scroll.saturating_sub(PAGE_SIZE);
+            }
+            KeyCode::PageDown if self.active_tab == Tab::Proc => {
+                self.proc_scroll = self.proc_scroll.saturating_add(PAGE_SIZE);
             }
             _ => {}
         }
@@ -423,6 +431,29 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.proc_scroll, 0);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 0);
+    }
+
+    #[test]
+    fn key_page_down_scrolls_proc() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 0);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, PAGE_SIZE);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, PAGE_SIZE * 2);
+    }
+
+    #[test]
+    fn key_page_up_scrolls_proc() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, PAGE_SIZE);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert_eq!(app.proc_scroll, 0);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
         assert_eq!(app.proc_scroll, 0);
     }
 
