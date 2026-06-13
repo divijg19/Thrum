@@ -16,6 +16,7 @@ fn tab_color(tab: Tab) -> Color {
         Tab::Time => Color::Gray,
         Tab::Temp => Color::Red,
         Tab::Cores => Color::Blue,
+        Tab::Disk => Color::White,
     }
 }
 
@@ -155,12 +156,17 @@ fn format_uptime(secs: u64) -> String {
     let d = secs / 86400;
     let h = (secs % 86400) / 3600;
     let m = (secs % 3600) / 60;
+    let s = secs % 60;
     if d > 0 {
         format!("{d}d {h}h {m}m")
     } else if h > 0 {
         format!("{h}h {m}m")
-    } else {
+    } else if m > 0 && s == 0 {
         format!("{m}m")
+    } else if m > 0 {
+        format!("{m}m {s}s")
+    } else {
+        format!("{s}s")
     }
 }
 
@@ -293,6 +299,56 @@ fn render_files(frame: &mut Frame, area: Rect, samples: &Samples) {
         ]))
         .block(Block::bordered().title(" Filesystems "));
     frame.render_widget(table, area);
+}
+
+fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+    let [table_area, read_spark, write_spark] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+    ])
+    .areas(area);
+
+    let rows: Vec<Row> = samples
+        .disk_io
+        .iter()
+        .map(|d| {
+            Row::new(vec![
+                Cell::from(d.mount_point.as_str()),
+                Cell::from(Span::styled(
+                    format_bytes(d.read_rate),
+                    Style::new().fg(Color::Cyan),
+                )),
+                Cell::from(Span::styled(
+                    format_bytes(d.write_rate),
+                    Style::new().fg(Color::Yellow),
+                )),
+            ])
+        })
+        .collect();
+
+    let widths: [Constraint; 3] = [
+        Constraint::Fill(1),
+        Constraint::Length(12),
+        Constraint::Length(12),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec!["Mount", "Read", "Write"]))
+        .block(Block::bordered().title(" Disk I/O "));
+    frame.render_widget(table, table_area);
+
+    let rs = Sparkline::default()
+        .block(Block::bordered().title(" Read "))
+        .data(app.disk_read_history.iter())
+        .style(Style::new().fg(Color::Cyan));
+    frame.render_widget(&rs, read_spark);
+
+    let ws = Sparkline::default()
+        .block(Block::bordered().title(" Write "))
+        .data(app.disk_write_history.iter())
+        .style(Style::new().fg(Color::Yellow));
+    frame.render_widget(&ws, write_spark);
 }
 
 fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -545,6 +601,7 @@ pub fn draw(frame: &mut Frame, app: &App, samples: &Samples) {
         Tab::Time => render_time(frame, tab_area, samples),
         Tab::Temp => render_temp(frame, tab_area, samples),
         Tab::Cores => render_cores(frame, tab_area, samples),
+        Tab::Disk => render_disk(frame, tab_area, app, samples),
     }
 
     let status = Paragraph::new(if app.help_visible {
@@ -616,11 +673,17 @@ mod tests {
     }
 
     #[test]
+    fn format_uptime_seconds() {
+        assert_eq!(format_uptime(0), "0s");
+        assert_eq!(format_uptime(30), "30s");
+        assert_eq!(format_uptime(59), "59s");
+    }
+
+    #[test]
     fn format_uptime_minutes() {
-        assert_eq!(format_uptime(0), "0m");
-        assert_eq!(format_uptime(30), "0m");
-        assert_eq!(format_uptime(119), "1m");
+        assert_eq!(format_uptime(119), "1m 59s");
         assert_eq!(format_uptime(120), "2m");
+        assert_eq!(format_uptime(150), "2m 30s");
     }
 
     #[test]
@@ -644,6 +707,7 @@ mod tests {
         assert_eq!(tab_color(Tab::Time), Color::Gray);
         assert_eq!(tab_color(Tab::Temp), Color::Red);
         assert_eq!(tab_color(Tab::Cores), Color::Blue);
+        assert_eq!(tab_color(Tab::Disk), Color::White);
     }
 
     #[test]

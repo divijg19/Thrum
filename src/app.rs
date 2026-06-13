@@ -20,10 +20,11 @@ pub enum Tab {
     Time,
     Temp,
     Cores,
+    Disk,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 7] = [
+    pub const ALL: [Tab; 8] = [
         Tab::Dash,
         Tab::Proc,
         Tab::Net,
@@ -31,6 +32,7 @@ impl Tab {
         Tab::Time,
         Tab::Temp,
         Tab::Cores,
+        Tab::Disk,
     ];
 
     pub fn label(&self) -> &str {
@@ -42,6 +44,7 @@ impl Tab {
             Tab::Time => "Time",
             Tab::Temp => "Temp",
             Tab::Cores => "Cores",
+            Tab::Disk => "Disk",
         }
     }
 }
@@ -54,6 +57,8 @@ pub struct App {
     pub mem_history: VecDeque<u64>,
     pub net_rx_history: VecDeque<u64>,
     pub net_tx_history: VecDeque<u64>,
+    pub disk_read_history: VecDeque<u64>,
+    pub disk_write_history: VecDeque<u64>,
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
@@ -72,6 +77,8 @@ impl App {
             mem_history: VecDeque::with_capacity(60),
             net_rx_history: VecDeque::with_capacity(60),
             net_tx_history: VecDeque::with_capacity(60),
+            disk_read_history: VecDeque::with_capacity(60),
+            disk_write_history: VecDeque::with_capacity(60),
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
@@ -127,11 +134,17 @@ impl App {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
             KeyCode::Char('?') => self.help_visible = !self.help_visible,
             KeyCode::Tab => {
-                let idx = Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap();
+                let idx = Tab::ALL
+                    .iter()
+                    .position(|t| *t == self.active_tab)
+                    .unwrap_or(0);
                 self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
             }
             KeyCode::BackTab => {
-                let idx = Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap();
+                let idx = Tab::ALL
+                    .iter()
+                    .position(|t| *t == self.active_tab)
+                    .unwrap_or(0);
                 self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
             }
             KeyCode::Char('1') => self.active_tab = Tab::Dash,
@@ -141,6 +154,7 @@ impl App {
             KeyCode::Char('5') => self.active_tab = Tab::Time,
             KeyCode::Char('6') => self.active_tab = Tab::Temp,
             KeyCode::Char('7') => self.active_tab = Tab::Cores,
+            KeyCode::Char('8') => self.active_tab = Tab::Disk,
             KeyCode::Char('/') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
                 self.proc_search_focused = true;
             }
@@ -195,7 +209,9 @@ pub fn parse_args() -> Config {
             "--help" | "-h" => {
                 eprintln!("Usage: thrum [OPTIONS]");
                 eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
-                eprintln!("  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp)");
+                eprintln!(
+                    "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk)"
+                );
                 eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
                 eprintln!("  --help                Show this help");
                 std::process::exit(0);
@@ -228,6 +244,8 @@ pub fn parse_args() -> Config {
                     "files" => Tab::Files,
                     "time" => Tab::Time,
                     "temp" => Tab::Temp,
+                    "cores" => Tab::Cores,
+                    "disk" => Tab::Disk,
                     _ => {
                         eprintln!("error: unknown tab '{name}'");
                         std::process::exit(1);
@@ -265,8 +283,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
-    fn tab_has_seven_variants() {
-        assert_eq!(Tab::ALL.len(), 7);
+    fn tab_has_eight_variants() {
+        assert_eq!(Tab::ALL.len(), 8);
     }
 
     #[test]
@@ -278,6 +296,7 @@ mod tests {
         assert_eq!(Tab::Time.label(), "Time");
         assert_eq!(Tab::Temp.label(), "Temp");
         assert_eq!(Tab::Cores.label(), "Cores");
+        assert_eq!(Tab::Disk.label(), "Disk");
     }
 
     #[test]
@@ -321,13 +340,17 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Cores);
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Disk);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
     }
 
     #[test]
     fn key_backtab_cycles_backward() {
         let mut app = App::new();
-        app.handle_key(KeyEvent::new(KeyCode::Char('7'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Disk);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Cores);
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Temp);
@@ -342,7 +365,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
-        assert_eq!(app.active_tab, Tab::Cores);
+        assert_eq!(app.active_tab, Tab::Disk);
     }
 
     #[test]
@@ -362,6 +385,8 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Temp);
         app.handle_key(KeyEvent::new(KeyCode::Char('7'), KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Cores);
+        app.handle_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Disk);
     }
 
     #[test]
