@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
 use crate::app::{App, ProcSortField, Tab};
-use crate::samplers::{ProcessInfo, Samples};
+use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
     match tab {
@@ -295,6 +295,44 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
 }
 
 fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+    let has_query = !app.files_query.is_empty();
+
+    let inner_area = if has_query || app.files_search_focused {
+        let [search_area, rest] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        let cursor = if app.files_search_focused {
+            "\u{258c}"
+        } else {
+            ""
+        };
+        let content = if app.files_query.is_empty() {
+            cursor.to_string()
+        } else {
+            format!("{}{cursor}", app.files_query)
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(" Search ")),
+            search_area,
+        );
+        rest
+    } else {
+        area
+    };
+
+    let [table_area, spark_area] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(inner_area);
+
+    let filtered: Vec<&DiskInfo> = if has_query {
+        let q = app.files_query.to_lowercase();
+        samples
+            .disks
+            .iter()
+            .filter(|d| d.mount.to_lowercase().contains(&q))
+            .collect()
+    } else {
+        samples.disks.iter().collect()
+    };
+
     let widths: [Constraint; 6] = [
         Constraint::Fill(1),
         Constraint::Length(6),
@@ -304,8 +342,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         Constraint::Length(7),
     ];
 
-    let rows: Vec<Row> = samples
-        .disks
+    let rows: Vec<Row> = filtered
         .iter()
         .map(|d| {
             Row::new(vec![
@@ -327,9 +364,6 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
             ])
         })
         .collect();
-
-    let [table_area, spark_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(area);
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec![
@@ -396,15 +430,49 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 }
 
 fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+    let has_query = !app.net_query.is_empty();
+
+    let table_area = if has_query || app.net_search_focused {
+        let [search_area, rest] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        let cursor = if app.net_search_focused {
+            "\u{258c}"
+        } else {
+            ""
+        };
+        let content = if app.net_query.is_empty() {
+            cursor.to_string()
+        } else {
+            format!("{}{cursor}", app.net_query)
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(" Search ")),
+            search_area,
+        );
+        rest
+    } else {
+        area
+    };
+
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
         Constraint::Length(3),
     ])
-    .areas(area);
+    .areas(table_area);
 
-    let rows: Vec<Row> = samples
-        .interfaces
+    let filtered: Vec<&NetInfo> = if has_query {
+        let q = app.net_query.to_lowercase();
+        samples
+            .interfaces
+            .iter()
+            .filter(|i| i.name.to_lowercase().contains(&q))
+            .collect()
+    } else {
+        samples.interfaces.iter().collect()
+    };
+
+    let rows: Vec<Row> = filtered
         .iter()
         .map(|iface| {
             Row::new(vec![
@@ -501,6 +569,7 @@ fn render_proc(
             ProcSortField::Pid => a.pid.cmp(&b.pid),
             ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
             ProcSortField::Memory => a.memory.cmp(&b.memory),
+            ProcSortField::Status => a.status.cmp(&b.status),
         };
         if sort_asc { ord } else { ord.reverse() }
     });
@@ -559,7 +628,10 @@ fn render_proc(
                 "Memory{}",
                 sort_arrow(ProcSortField::Memory, sort_field, sort_asc)
             ),
-            "Status".to_string(),
+            format!(
+                "Status{}",
+                sort_arrow(ProcSortField::Status, sort_field, sort_asc)
+            ),
         ]))
         .block(Block::bordered().title(format!(
             " Processes ({}/{}) ",
@@ -575,12 +647,11 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  ?            Toggle help           Ctrl+S          Toggle sidebar"),
         Line::from("  Tab          Next tab               Shift+Tab       Previous tab"),
         Line::from(format!("  1-{}          Jump to tab", Tab::ALL.len())),
-        Line::from("  /            Search (Proc tab)      Esc/Enter       Cancel/Confirm"),
+        Line::from("  /            Search / Filter       Esc             Clear"),
         Line::from("  n            Sort by name            p               Sort by PID"),
         Line::from("  c            Sort by CPU             m               Sort by memory"),
-        Line::from(
-            "  r            Toggle sort order       \u{2191}/\u{2193}            Scroll (Proc)",
-        ),
+        Line::from("  s            Sort by status          r               Toggle order"),
+        Line::from("  \u{2191}/\u{2193}    Scroll (Proc)           PgUp/PgDn       Page scroll"),
         Line::from("  q            Quit"),
         Line::from(""),
         Line::from("  Press ? to close"),

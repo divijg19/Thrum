@@ -11,6 +11,7 @@ pub enum ProcSortField {
     Pid,
     Cpu,
     Memory,
+    Status,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +67,10 @@ pub struct App {
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
+    pub net_query: String,
+    pub net_search_focused: bool,
+    pub files_query: String,
+    pub files_search_focused: bool,
     pub proc_sort_field: ProcSortField,
     pub proc_sort_asc: bool,
     pub should_quit: bool,
@@ -88,6 +93,10 @@ impl App {
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
+            net_query: String::new(),
+            net_search_focused: false,
+            files_query: String::new(),
+            files_search_focused: false,
             proc_sort_field: ProcSortField::Cpu,
             proc_sort_asc: false,
             should_quit: false,
@@ -124,12 +133,56 @@ impl App {
                     self.proc_search_focused = false;
                     return;
                 }
-                KeyCode::Enter => {
+                _ => {
                     self.proc_search_focused = false;
+                }
+            }
+        }
+
+        if self.net_search_focused && self.active_tab == Tab::Net {
+            match key.code {
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    self.net_query.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.net_query.pop();
+                    if self.net_query.is_empty() {
+                        self.net_search_focused = false;
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.net_query.clear();
+                    self.net_search_focused = false;
                     return;
                 }
                 _ => {
-                    self.proc_search_focused = false;
+                    self.net_search_focused = false;
+                }
+            }
+        }
+
+        if self.files_search_focused && self.active_tab == Tab::Files {
+            match key.code {
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    self.files_query.push(c);
+                    return;
+                }
+                KeyCode::Backspace => {
+                    self.files_query.pop();
+                    if self.files_query.is_empty() {
+                        self.files_search_focused = false;
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.files_query.clear();
+                    self.files_search_focused = false;
+                    return;
+                }
+                _ => {
+                    self.files_search_focused = false;
                 }
             }
         }
@@ -166,9 +219,12 @@ impl App {
             KeyCode::Char('6') => self.active_tab = Tab::Temp,
             KeyCode::Char('7') => self.active_tab = Tab::Cores,
             KeyCode::Char('8') => self.active_tab = Tab::Disk,
-            KeyCode::Char('/') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_search_focused = true;
-            }
+            KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
+                Tab::Proc => self.proc_search_focused = true,
+                Tab::Net => self.net_search_focused = true,
+                Tab::Files => self.files_search_focused = true,
+                _ => {}
+            },
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sidebar_visible = !self.sidebar_visible;
             }
@@ -190,6 +246,10 @@ impl App {
             }
             KeyCode::Char('r') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
                 self.proc_sort_asc = !self.proc_sort_asc;
+            }
+            KeyCode::Char('s') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::Status;
+                self.proc_sort_asc = true;
             }
             KeyCode::Up if self.active_tab == Tab::Proc => {
                 self.proc_scroll = self.proc_scroll.saturating_sub(1);
@@ -330,6 +390,10 @@ mod tests {
         assert_eq!(app.proc_scroll, 0);
         assert!(app.proc_query.is_empty());
         assert!(!app.proc_search_focused);
+        assert!(app.net_query.is_empty());
+        assert!(!app.net_search_focused);
+        assert!(app.files_query.is_empty());
+        assert!(!app.files_search_focused);
         assert_eq!(app.mem_history.len(), 0);
         assert_eq!(app.net_rx_history.len(), 0);
         assert_eq!(app.net_tx_history.len(), 0);
@@ -576,6 +640,66 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
         assert_eq!(app.active_tab, Tab::Net);
+    }
+
+    #[test]
+    fn key_slash_enters_search_on_net() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert!(!app.net_search_focused);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.net_search_focused);
+    }
+
+    #[test]
+    fn key_slash_enters_search_on_files() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
+        assert!(!app.files_search_focused);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.files_search_focused);
+    }
+
+    #[test]
+    fn key_slash_noop_on_dash() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(!app.proc_search_focused);
+        assert!(!app.net_search_focused);
+        assert!(!app.files_search_focused);
+    }
+
+    #[test]
+    fn net_search_esc_clears() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        assert_eq!(app.net_query, "e");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.net_query.is_empty());
+        assert!(!app.net_search_focused);
+    }
+
+    #[test]
+    fn files_search_esc_clears() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(app.files_query, "m");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.files_query.is_empty());
+        assert!(!app.files_search_focused);
+    }
+
+    #[test]
+    fn sort_key_s_sorts_by_status() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.proc_sort_field, ProcSortField::Status);
+        assert!(app.proc_sort_asc);
     }
 
     #[test]
