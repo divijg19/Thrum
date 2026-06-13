@@ -44,6 +44,29 @@ fn main() -> std::io::Result<()> {
         app::push_bounded(&mut app.disk_read_history, total_disk_read, WINDOW);
         app::push_bounded(&mut app.disk_write_history, total_disk_write, WINDOW);
 
+        let valid_temps: Vec<f32> = samples
+            .temperatures
+            .iter()
+            .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
+            .collect();
+        let avg_temp = if valid_temps.is_empty() {
+            0.0
+        } else {
+            valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
+        };
+        app::push_bounded(&mut app.temp_history, (avg_temp * 10.0) as u64, WINDOW);
+
+        let avg_usage = if samples.disks.is_empty() {
+            0.0
+        } else {
+            samples.disks.iter().map(|d| d.usage_pct).sum::<f32>() / samples.disks.len() as f32
+        };
+        app::push_bounded(
+            &mut app.disk_usage_history,
+            (avg_usage * 10.0) as u64,
+            WINDOW,
+        );
+
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
         if event::poll(refresh)?

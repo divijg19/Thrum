@@ -61,6 +61,8 @@ pub struct App {
     pub net_tx_history: VecDeque<u64>,
     pub disk_read_history: VecDeque<u64>,
     pub disk_write_history: VecDeque<u64>,
+    pub temp_history: VecDeque<u64>,
+    pub disk_usage_history: VecDeque<u64>,
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
@@ -81,6 +83,8 @@ impl App {
             net_tx_history: VecDeque::with_capacity(60),
             disk_read_history: VecDeque::with_capacity(60),
             disk_write_history: VecDeque::with_capacity(60),
+            temp_history: VecDeque::with_capacity(60),
+            disk_usage_history: VecDeque::with_capacity(60),
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
@@ -96,7 +100,12 @@ impl App {
         self.sidebar_visible = !cfg.hide_sidebar;
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return;
+        }
         if self.proc_search_focused && self.active_tab == Tab::Proc {
             match key.code {
                 KeyCode::Char(c) if key.modifiers.is_empty() => {
@@ -326,6 +335,8 @@ mod tests {
         assert_eq!(app.net_tx_history.len(), 0);
         assert_eq!(app.disk_read_history.len(), 0);
         assert_eq!(app.disk_write_history.len(), 0);
+        assert_eq!(app.temp_history.len(), 0);
+        assert_eq!(app.disk_usage_history.len(), 0);
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
         assert!(!app.help_visible);
@@ -336,6 +347,20 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn key_ctrl_c_quits() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn key_plain_c_does_not_quit() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert!(!app.should_quit);
     }
 
     #[test]
