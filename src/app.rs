@@ -24,10 +24,11 @@ pub enum Tab {
     Temp,
     Cores,
     Disk,
+    Mem,
 }
 
 impl Tab {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Dash,
         Self::Proc,
         Self::Net,
@@ -36,6 +37,7 @@ impl Tab {
         Self::Temp,
         Self::Cores,
         Self::Disk,
+        Self::Mem,
     ];
 
     pub const fn label(&self) -> &str {
@@ -48,6 +50,7 @@ impl Tab {
             Self::Temp => "Temp",
             Self::Cores => "Cores",
             Self::Disk => "Disk",
+            Self::Mem => "Mem",
         }
     }
 }
@@ -219,6 +222,7 @@ impl App {
             KeyCode::Char('6') => self.active_tab = Tab::Temp,
             KeyCode::Char('7') => self.active_tab = Tab::Cores,
             KeyCode::Char('8') => self.active_tab = Tab::Disk,
+            KeyCode::Char('9') => self.active_tab = Tab::Mem,
             KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
                 Tab::Proc => self.proc_search_focused = true,
                 Tab::Net => self.net_search_focused = true,
@@ -365,8 +369,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
-    fn tab_has_eight_variants() {
-        assert_eq!(Tab::ALL.len(), 8);
+    fn tab_has_nine_variants() {
+        assert_eq!(Tab::ALL.len(), 9);
     }
 
     #[test]
@@ -379,6 +383,7 @@ mod tests {
         assert_eq!(Tab::Temp.label(), "Temp");
         assert_eq!(Tab::Cores.label(), "Cores");
         assert_eq!(Tab::Disk.label(), "Disk");
+        assert_eq!(Tab::Mem.label(), "Mem");
     }
 
     #[test]
@@ -446,6 +451,8 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Disk);
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Mem);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
     }
 
@@ -469,6 +476,8 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Mem);
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Disk);
     }
 
@@ -491,6 +500,8 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Cores);
         app.handle_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Disk);
+        app.handle_key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, Tab::Mem);
     }
 
     #[test]
