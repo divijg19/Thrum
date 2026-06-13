@@ -259,7 +259,7 @@ impl Samplers {
     }
 }
 
-fn format_status(status: ProcessStatus) -> &'static str {
+const fn format_status(status: ProcessStatus) -> &'static str {
     match status {
         ProcessStatus::Run => "Running",
         ProcessStatus::Sleep => "Sleep",
