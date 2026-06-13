@@ -193,6 +193,52 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
+fn format_timestamp(secs: u64) -> String {
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let hour = rem / 3600;
+    let min = (rem % 3600) / 60;
+    let sec = rem % 60;
+
+    let mut year = 1970u64;
+    let mut day = days;
+    loop {
+        let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
+        let diy = if leap { 366 } else { 365 };
+        if day < diy {
+            break;
+        }
+        day -= diy;
+        year += 1;
+    }
+
+    let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
+    let month_days: [u64; 12] = if leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut mo = 0;
+    for &md in &month_days {
+        if day < md {
+            break;
+        }
+        day -= md;
+        mo += 1;
+    }
+
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        year,
+        mo + 1,
+        day + 1,
+        hour,
+        min,
+        sec
+    )
+}
+
 fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
     let lines = vec![
         Line::from(vec![
@@ -219,11 +265,23 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
             Span::styled("CPUs        ", Style::new().bold()),
             Span::raw(format!("{}", samples.sys_info.cpu_count)),
         ]),
+        Line::from(vec![
+            Span::styled("Distro      ", Style::new().bold()),
+            Span::raw(&samples.sys_info.distro),
+        ]),
+        Line::from(vec![
+            Span::styled("Boot        ", Style::new().bold()),
+            Span::raw(format_timestamp(samples.sys_info.boot_time)),
+        ]),
+        Line::from(vec![
+            Span::styled("Phys Cores  ", Style::new().bold()),
+            Span::raw(format!("{}", samples.sys_info.physical_cores)),
+        ]),
     ];
 
     let [_, info, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(6),
+        Constraint::Length(9),
         Constraint::Fill(1),
     ])
     .areas(area);
