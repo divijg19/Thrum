@@ -1,7 +1,10 @@
 use std::collections::VecDeque;
 use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::Deserialize;
 
 pub const PAGE_SIZE: usize = 10;
 pub const WINDOW: usize = 60;
@@ -17,8 +20,10 @@ pub enum ProcSortField {
     Status,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Tab {
+    #[default]
     Dash,
     Proc,
     Net,
@@ -43,7 +48,21 @@ impl Tab {
         Self::Mem,
     ];
 
-    pub const fn label(&self) -> &str {
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Dash => 0,
+            Self::Proc => 1,
+            Self::Net => 2,
+            Self::Files => 3,
+            Self::Time => 4,
+            Self::Temp => 5,
+            Self::Cores => 6,
+            Self::Disk => 7,
+            Self::Mem => 8,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Dash => "Dash",
             Self::Proc => "Proc",
@@ -206,17 +225,11 @@ impl App {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
             KeyCode::Char('?') => self.help_visible = !self.help_visible,
             KeyCode::Tab => {
-                let idx = Tab::ALL
-                    .iter()
-                    .position(|t| *t == self.active_tab)
-                    .unwrap_or(0);
+                let idx = self.active_tab.index();
                 self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
             }
             KeyCode::BackTab => {
-                let idx = Tab::ALL
-                    .iter()
-                    .position(|t| *t == self.active_tab)
-                    .unwrap_or(0);
+                let idx = self.active_tab.index();
                 self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
             }
             KeyCode::Char('1') => self.active_tab = Tab::Dash,
@@ -285,43 +298,98 @@ impl App {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub refresh_ms: u64,
     pub default_tab: Tab,
     pub hide_sidebar: bool,
 }
 
+fn default_config_path() -> Option<PathBuf> {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("thrum/config.toml"));
+    }
+    let home = env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".config/thrum/config.toml"))
+}
+
+fn read_config_file(path: &Path) -> Option<Config> {
+    let content = fs::read_to_string(path).ok()?;
+    match toml::from_str(&content) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!(
+                "warning: config file '{}' has invalid TOML: {e}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
 pub fn parse_args() -> Config {
-    let mut refresh_ms = 1000u64;
-    let mut default_tab = Tab::Dash;
-    let mut hide_sidebar = false;
+    let args: Vec<String> = env::args().collect();
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!("Usage: thrum [OPTIONS]");
+        eprintln!();
+        eprintln!(
+            "  -c, --config <path>   Config file path (default: ~/.config/thrum/config.toml)"
+        );
+        eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
+        eprintln!(
+            "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)"
+        );
+        eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
+        eprintln!("  -V, --version         Show version");
+        eprintln!("  --help                Show this help");
+        std::process::exit(0);
+    }
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("thrum {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
+    let config_path = (1..args.len())
+        .rfind(|&i| args[i] == "--config" || args[i] == "-c")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
+    let mut cfg = config_path.as_ref().map_or_else(
+        || {
+            default_config_path()
+                .and_then(|p| read_config_file(&p))
+                .unwrap_or_default()
+        },
+        |path| {
+            let p = Path::new(path);
+            if !p.exists() {
+                eprintln!("error: config file '{path}' not found");
+                std::process::exit(1);
+            }
+            read_config_file(p).unwrap_or_else(|| {
+                eprintln!("error: config file '{path}' has invalid TOML");
+                std::process::exit(1);
+            })
+        },
+    );
 
     let mut i = 1;
-    let args: Vec<String> = env::args().collect();
     while i < args.len() {
         match args[i].as_str() {
-            "--help" | "-h" => {
-                eprintln!("Usage: thrum [OPTIONS]");
-                eprintln!("  -r, --refresh <ms>    Refresh interval (default: 1000)");
-                eprintln!(
-                    "  -t, --tab <name>      Default tab (dash|proc|net|files|time|temp|cores|disk|mem)"
-                );
-                eprintln!("  -s, --no-sidebar      Start with sidebar hidden");
-                eprintln!("  -V, --version         Show version");
-                eprintln!("  --help                Show this help");
-                std::process::exit(0);
-            }
             "-r" | "--refresh" => {
                 i += 1;
                 let val = args.get(i).unwrap_or_else(|| {
                     eprintln!("error: --refresh requires a value");
                     std::process::exit(1);
                 });
-                refresh_ms = val.parse().unwrap_or_else(|_| {
+                cfg.refresh_ms = val.parse().unwrap_or_else(|_| {
                     eprintln!("error: --refresh must be a positive integer");
                     std::process::exit(1);
                 });
-                if refresh_ms == 0 {
+                if cfg.refresh_ms == 0 {
                     eprintln!("error: --refresh must be > 0");
                     std::process::exit(1);
                 }
@@ -332,7 +400,7 @@ pub fn parse_args() -> Config {
                     eprintln!("error: --tab requires a value");
                     std::process::exit(1);
                 });
-                default_tab = match name.to_lowercase().as_str() {
+                cfg.default_tab = match name.to_lowercase().as_str() {
                     "dash" => Tab::Dash,
                     "proc" => Tab::Proc,
                     "net" => Tab::Net,
@@ -349,11 +417,14 @@ pub fn parse_args() -> Config {
                 };
             }
             "-s" | "--no-sidebar" => {
-                hide_sidebar = true;
+                cfg.hide_sidebar = true;
             }
-            "-V" | "--version" => {
-                println!("thrum {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
+            "--config" | "-c" => {
+                args.get(i + 1).unwrap_or_else(|| {
+                    eprintln!("error: --config requires a value");
+                    std::process::exit(1);
+                });
+                i += 1;
             }
             _ => {
                 eprintln!("error: unknown flag '{}'", args[i]);
@@ -363,11 +434,7 @@ pub fn parse_args() -> Config {
         i += 1;
     }
 
-    Config {
-        refresh_ms,
-        default_tab,
-        hide_sidebar,
-    }
+    cfg
 }
 
 pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
@@ -802,5 +869,122 @@ mod tests {
         };
         app.apply_config(&cfg);
         assert!(!app.sidebar_visible);
+    }
+
+    #[test]
+    fn config_deserialize_full() {
+        let toml_str = "refresh_ms = 500\ndefault_tab = \"proc\"\nhide_sidebar = true\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.refresh_ms, 500);
+        assert_eq!(cfg.default_tab, Tab::Proc);
+        assert!(cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn config_deserialize_partial() {
+        let toml_str = "refresh_ms = 200\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.refresh_ms, 200);
+        assert_eq!(cfg.default_tab, Tab::Dash);
+        assert!(!cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn config_deserialize_empty() {
+        let toml_str = "";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.refresh_ms, 0);
+        assert_eq!(cfg.default_tab, Tab::Dash);
+        assert!(!cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn config_deserialize_all_tabs() {
+        for (name, tab) in [
+            ("dash", Tab::Dash),
+            ("proc", Tab::Proc),
+            ("net", Tab::Net),
+            ("files", Tab::Files),
+            ("time", Tab::Time),
+            ("temp", Tab::Temp),
+            ("cores", Tab::Cores),
+            ("disk", Tab::Disk),
+            ("mem", Tab::Mem),
+        ] {
+            let toml_str = format!("default_tab = \"{name}\"");
+            let cfg: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(cfg.default_tab, tab, "tab name '{name}'");
+        }
+    }
+
+    #[test]
+    fn config_deserialize_unknown_field_ignored() {
+        let toml_str = "nonexistent = true\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.refresh_ms, 0);
+    }
+
+    #[test]
+    fn config_deserialize_wrong_type() {
+        let toml_str = "refresh_ms = \"not_a_number\"\n";
+        let cfg: Result<Config, _> = toml::from_str(toml_str);
+        assert!(cfg.is_err());
+    }
+
+    #[test]
+    fn config_path_format() {
+        let path = default_config_path();
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with("thrum/config.toml"));
+    }
+
+    #[test]
+    fn config_cli_overrides() {
+        let toml_str = "refresh_ms = 500\ndefault_tab = \"dash\"\nhide_sidebar = true\n";
+        let mut cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.refresh_ms, 500);
+        cfg.refresh_ms = 200;
+        cfg.hide_sidebar = false;
+        assert_eq!(cfg.refresh_ms, 200);
+        assert_eq!(cfg.default_tab, Tab::Dash);
+        assert!(!cfg.hide_sidebar);
+    }
+
+    #[test]
+    fn tab_index_matches_all() {
+        for (i, tab) in Tab::ALL.iter().enumerate() {
+            assert_eq!(tab.index(), i, "{tab:?} index should be {i}");
+        }
+    }
+
+    #[test]
+    fn sort_keys_all_fields() {
+        use crossterm::event::KeyCode;
+
+        let keys: [(KeyCode, ProcSortField, bool); 7] = [
+            (KeyCode::Char('n'), ProcSortField::Name, true),
+            (KeyCode::Char('p'), ProcSortField::Pid, true),
+            (KeyCode::Char('c'), ProcSortField::Cpu, false),
+            (KeyCode::Char('m'), ProcSortField::Memory, false),
+            (KeyCode::Char('v'), ProcSortField::VirtualMemory, false),
+            (KeyCode::Char('t'), ProcSortField::RunTime, false),
+            (KeyCode::Char('s'), ProcSortField::Status, true),
+        ];
+        for (key, expected_field, expected_asc) in &keys {
+            let mut app = App::new();
+            app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+            app.handle_key(KeyEvent::new(*key, KeyModifiers::NONE));
+            assert_eq!(
+                app.proc_sort_field, *expected_field,
+                "key '{:?}' should set sort field to {expected_field:?}",
+                key
+            );
+            assert_eq!(
+                app.proc_sort_asc, *expected_asc,
+                "key '{:?}' should set sort_asc to {expected_asc}",
+                key
+            );
+        }
     }
 }

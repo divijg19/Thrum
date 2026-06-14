@@ -100,6 +100,7 @@ pub struct Samplers {
     os: String,
     kernel: String,
     arch: String,
+    physical_cores: usize,
 }
 
 impl Samplers {
@@ -122,6 +123,7 @@ impl Samplers {
             os: System::long_os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_default(),
             arch: System::cpu_arch(),
+            physical_cores: System::physical_core_count().unwrap_or(0),
         }
     }
 
@@ -268,7 +270,7 @@ impl Samplers {
             uptime: System::uptime(),
             cpu_count: self.sys.cpus().len(),
             boot_time: System::boot_time(),
-            physical_cores: System::physical_core_count().unwrap_or(0),
+            physical_cores: self.physical_cores,
             distro: System::distribution_id(),
         };
 

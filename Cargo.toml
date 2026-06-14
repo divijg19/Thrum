@@ -1,9 +1,11 @@
 [package]
 name = "thrum"
-version = "0.2.14"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 sysinfo = "0.39"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
