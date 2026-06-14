@@ -67,6 +67,7 @@ pub struct App {
     pub disk_write_history: VecDeque<u64>,
     pub temp_history: VecDeque<u64>,
     pub disk_usage_history: VecDeque<u64>,
+    pub swap_history: VecDeque<u64>,
     pub proc_scroll: usize,
     pub proc_query: String,
     pub proc_search_focused: bool,
@@ -93,6 +94,7 @@ impl App {
             disk_write_history: VecDeque::with_capacity(60),
             temp_history: VecDeque::with_capacity(60),
             disk_usage_history: VecDeque::with_capacity(60),
+            swap_history: VecDeque::with_capacity(60),
             proc_scroll: 0,
             proc_query: String::new(),
             proc_search_focused: false,
@@ -406,6 +408,7 @@ mod tests {
         assert_eq!(app.disk_write_history.len(), 0);
         assert_eq!(app.temp_history.len(), 0);
         assert_eq!(app.disk_usage_history.len(), 0);
+        assert_eq!(app.swap_history.len(), 0);
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
         assert!(!app.help_visible);

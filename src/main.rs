@@ -67,6 +67,13 @@ fn main() -> std::io::Result<()> {
             WINDOW,
         );
 
+        let swap_pct = if samples.swap_total > 0 {
+            (samples.swap_used as f64 / samples.swap_total as f64 * 100.0) as u64
+        } else {
+            0
+        };
+        app::push_bounded(&mut app.swap_history, swap_pct, WINDOW);
+
         terminal.draw(|f| tui::draw(f, &app, &samples))?;
 
         if event::poll(refresh)?
