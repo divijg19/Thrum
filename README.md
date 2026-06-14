@@ -9,13 +9,14 @@ A terminal-native observatory for your machine.
 | Thrum  |        CPU ████████░░ 78%                               |
 +--------+---------------------------------------------------------+
 | Dash   |  CPU ████████░░ 78%   Mem ██████░░░░ 58%                |
-| Proc   |  firefox    8.2%  1.2GB  Sleeping     3204              |
-| Net    |  code      12.4%   342MB  Running      5891             |
-| Files  |  dockerd    1.8%   112MB  Running      1562             |
-| Time   |  myhost    6.4.0    x86_64    2d 14h                    |
-| Temp   |  cpu0     42.5°C  85.0°C   100.0°C                      |
-| Cores  |  cpu0     42.5%  3400MHz   ████████░░                   |
-| Disk   |  /        1.2MB/s  512KB/s                              |
+| Proc   |  firefox  3204  8.2%  1.2GiB  94MiB  42m  Sleep         |
+| Net    |  eth0    1.2MB  512KB  Up  00:11:22:33:44:55  192.168   |
+| Files  |  /dev/sda1  /     ext4  238GiB  98GiB  58%  ssd         |
+| Time   |  myhost  Linux 6.4.0  x86_64  2d 14h  8 CPUs            |
+| Temp   |  cpu0   42.5°C  85.0°C  100.0°C                         |
+| Cores  |  cpu0   42.5%  3400MHz  ████████░░                      |
+| Disk   |  /       1.2MB/s  512KB/s                               |
+| Mem    |  Mem 15.6GiB  Used 8.2GiB  Avail 6.8GiB                 |
 +--------+---------------------------------------------------------+
 ```
 

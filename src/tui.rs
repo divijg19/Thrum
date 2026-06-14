@@ -802,9 +802,9 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  n            Sort by name            p               Sort by PID"),
         Line::from("  c            Sort by CPU             m               Sort by memory"),
         Line::from("  v            Sort by virtual mem     t               Sort by run time"),
-        Line::from("  s            Sort by status          r               Toggle order"),
+        Line::from("  s            Sort by status          r               Toggle sort order"),
         Line::from("  \u{2191}/\u{2193}    Scroll (Proc)           PgUp/PgDn       Page scroll"),
-        Line::from("  q            Quit"),
+        Line::from("  q / Ctrl+C  Quit"),
         Line::from(""),
         Line::from("  Press ? to close"),
     ];
