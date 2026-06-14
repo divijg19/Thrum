@@ -11,6 +11,8 @@ pub enum ProcSortField {
     Pid,
     Cpu,
     Memory,
+    VirtualMemory,
+    RunTime,
     Status,
 }
 
@@ -256,6 +258,14 @@ impl App {
             KeyCode::Char('s') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
                 self.proc_sort_field = ProcSortField::Status;
                 self.proc_sort_asc = true;
+            }
+            KeyCode::Char('v') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::VirtualMemory;
+                self.proc_sort_asc = false;
+            }
+            KeyCode::Char('t') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
+                self.proc_sort_field = ProcSortField::RunTime;
+                self.proc_sort_asc = false;
             }
             KeyCode::Up if self.active_tab == Tab::Proc => {
                 self.proc_scroll = self.proc_scroll.saturating_sub(1);
