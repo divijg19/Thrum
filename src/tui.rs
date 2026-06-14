@@ -118,8 +118,6 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     .gray();
     frame.render_widget(&l, load);
 
-    let total_disk_read: u64 = samples.disk_io.iter().map(|d| d.read_rate).sum();
-    let total_disk_write: u64 = samples.disk_io.iter().map(|d| d.write_rate).sum();
     let s = Paragraph::new(Line::from(vec![
         Span::styled("Net ", Style::new().bold()),
         Span::raw(format!(
@@ -131,8 +129,8 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         Span::styled("Disk ", Style::new().bold()),
         Span::raw(format!(
             "R {}  W {}",
-            format_bytes(total_disk_read).trim(),
-            format_bytes(total_disk_write).trim(),
+            format_bytes(samples.disk_read_rate).trim(),
+            format_bytes(samples.disk_write_rate).trim(),
         )),
     ]))
     .alignment(Alignment::Center)
@@ -237,6 +235,29 @@ fn format_timestamp(secs: u64) -> String {
         min,
         sec
     )
+}
+
+fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) -> Rect {
+    let (search_area, remaining) = if !query.is_empty() || focused {
+        let [s, r] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        (Some(s), r)
+    } else {
+        (None, area)
+    };
+
+    if let Some(sa) = search_area {
+        let cursor = if focused { "\u{258c}" } else { "" };
+        let content = if query.is_empty() {
+            cursor.to_string()
+        } else {
+            format!("{query}{cursor}")
+        };
+        frame.render_widget(
+            Paragraph::new(content).block(Block::bordered().title(" Search ")),
+            sa,
+        );
+    }
+    remaining
 }
 
 fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -451,27 +472,7 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
 fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let has_query = !app.files_query.is_empty();
 
-    let inner_area = if has_query || app.files_search_focused {
-        let [search_area, rest] =
-            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
-        let cursor = if app.files_search_focused {
-            "\u{258c}"
-        } else {
-            ""
-        };
-        let content = if app.files_query.is_empty() {
-            cursor.to_string()
-        } else {
-            format!("{}{cursor}", app.files_query)
-        };
-        frame.render_widget(
-            Paragraph::new(content).block(Block::bordered().title(" Search ")),
-            search_area,
-        );
-        rest
-    } else {
-        area
-    };
+    let inner_area = render_search_bar(frame, area, &app.files_query, app.files_search_focused);
 
     let [table_area, spark_area] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(inner_area);
@@ -481,13 +482,14 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         samples
             .disks
             .iter()
-            .filter(|d| d.mount.to_lowercase().contains(&q))
+            .filter(|d| d.mount.to_lowercase().contains(&q) || d.device.to_lowercase().contains(&q))
             .collect()
     } else {
         samples.disks.iter().collect()
     };
 
-    let widths: [Constraint; 6] = [
+    let widths: [Constraint; 7] = [
+        Constraint::Length(14),
         Constraint::Fill(1),
         Constraint::Length(6),
         Constraint::Length(9),
@@ -500,6 +502,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .iter()
         .map(|d| {
             Row::new(vec![
+                Cell::from(d.device.as_str()),
                 Cell::from(d.mount.as_str()),
                 Cell::from(d.fs.as_str()),
                 Cell::from(Span::styled(
@@ -521,7 +524,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec![
-            "Mount", "FS", "Size", "Avail", "Use%", "Kind",
+            "Device", "Mount", "FS", "Size", "Avail", "Use%", "Kind",
         ]))
         .block(Block::bordered().title(" Filesystems "));
     frame.render_widget(table, table_area);
@@ -586,27 +589,7 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let has_query = !app.net_query.is_empty();
 
-    let table_area = if has_query || app.net_search_focused {
-        let [search_area, rest] =
-            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
-        let cursor = if app.net_search_focused {
-            "\u{258c}"
-        } else {
-            ""
-        };
-        let content = if app.net_query.is_empty() {
-            cursor.to_string()
-        } else {
-            format!("{}{cursor}", app.net_query)
-        };
-        frame.render_widget(
-            Paragraph::new(content).block(Block::bordered().title(" Search ")),
-            search_area,
-        );
-        rest
-    } else {
-        area
-    };
+    let table_area = render_search_bar(frame, area, &app.net_query, app.net_search_focused);
 
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
         Constraint::Fill(1),
@@ -699,23 +682,7 @@ fn render_proc(
     sort_asc: bool,
 ) {
     let has_query = !query.is_empty();
-    let (search_area, table_area) = if has_query || searching {
-        let [s, t] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
-        (Some(s), t)
-    } else {
-        (None, area)
-    };
-
-    if let Some(sa) = search_area {
-        let cursor = if searching { "\u{258c}" } else { "" };
-        let content = if query.is_empty() {
-            cursor.to_string()
-        } else {
-            format!("{query}{cursor}")
-        };
-        let block = Paragraph::new(content).block(Block::bordered().title(" Search "));
-        frame.render_widget(&block, sa);
-    }
+    let table_area = render_search_bar(frame, area, query, searching);
 
     let mut filtered: Vec<&ProcessInfo> = if has_query {
         let q = query.to_lowercase();

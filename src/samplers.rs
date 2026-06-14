@@ -25,6 +25,7 @@ pub struct NetInfo {
 }
 
 pub struct DiskInfo {
+    pub device: String,
     pub mount: String,
     pub fs: String,
     pub total: u64,
@@ -82,6 +83,8 @@ pub struct Samples {
     pub disks: Vec<DiskInfo>,
     pub cpus: Vec<CpuInfo>,
     pub disk_io: Vec<DiskIoInfo>,
+    pub disk_read_rate: u64,
+    pub disk_write_rate: u64,
     pub temperatures: Vec<TempInfo>,
     pub sys_info: SysInfo,
 }
@@ -210,6 +213,7 @@ impl Samplers {
                 let available = d.available_space();
                 let used = total.saturating_sub(available);
                 DiskInfo {
+                    device: d.name().to_string_lossy().into_owned(),
                     mount: d.mount_point().display().to_string(),
                     fs: d.file_system().to_string_lossy().into_owned(),
                     total,
@@ -239,6 +243,9 @@ impl Samplers {
                 }
             })
             .collect();
+
+        let disk_read_rate: u64 = disk_io.iter().map(|d| d.read_rate).sum();
+        let disk_write_rate: u64 = disk_io.iter().map(|d| d.write_rate).sum();
 
         let mut temperatures: Vec<TempInfo> = self
             .components
@@ -296,6 +303,8 @@ impl Samplers {
             disks,
             cpus,
             disk_io,
+            disk_read_rate,
+            disk_write_rate,
             temperatures,
             sys_info,
         }
@@ -360,6 +369,26 @@ mod tests {
         assert_eq!(info.mount_point, "/");
         assert_eq!(info.read_rate, 1024);
         assert_eq!(info.write_rate, 2048);
+    }
+
+    #[test]
+    fn disk_info_fields() {
+        let info = DiskInfo {
+            device: String::from("/dev/sda1"),
+            mount: String::from("/"),
+            fs: String::from("ext4"),
+            total: 1_000_000_000_000,
+            available: 500_000_000_000,
+            usage_pct: 50.0,
+            kind: String::from("ssd"),
+        };
+        assert_eq!(info.device, "/dev/sda1");
+        assert_eq!(info.mount, "/");
+        assert_eq!(info.fs, "ext4");
+        assert_eq!(info.total, 1_000_000_000_000);
+        assert_eq!(info.available, 500_000_000_000);
+        assert!((info.usage_pct - 50.0).abs() < f32::EPSILON);
+        assert_eq!(info.kind, "ssd");
     }
 
     #[test]
