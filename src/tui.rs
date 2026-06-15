@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{App, ProcSortField, Tab};
+use crate::app::{App, KillState, ProcSortField, Tab};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
@@ -20,6 +20,16 @@ const fn tab_color(tab: Tab) -> Color {
         Tab::Mem => Color::LightBlue,
     }
 }
+
+const PROC_HEADERS: &[(&str, ProcSortField)] = &[
+    ("Name", ProcSortField::Name),
+    ("PID", ProcSortField::Pid),
+    ("CPU%", ProcSortField::Cpu),
+    ("Memory", ProcSortField::Memory),
+    ("Virtual", ProcSortField::VirtualMemory),
+    ("Time", ProcSortField::RunTime),
+    ("Status", ProcSortField::Status),
+];
 
 fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default().borders(Borders::RIGHT);
@@ -726,10 +736,10 @@ fn status_bar_text(app: &App) -> String {
         return fb.clone();
     }
     if app.help_visible {
-        return " ? Close help".to_string();
+        return " ? Close help".to_owned();
     }
-    if app.kill_pending && !app.kill_is_sigkill {
-        return " Kill? y/Y Yes | any key Cancel".to_string();
+    if app.kill_state == Some(KillState::Confirm) {
+        return " Kill? y/Y Yes | any key Cancel".to_owned();
     }
     let mut parts: Vec<&str> = vec![" ? Help", " q/Ctrl+C Quit"];
     let sidebar_hint = if app.sidebar_visible {
@@ -841,52 +851,13 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
         .collect();
 
     let table = Table::new(rows, widths)
-        .header(Row::new(vec![
-            format!(
-                "Name{}",
-                sort_arrow(ProcSortField::Name, app.proc_sort_field, app.proc_sort_asc)
-            ),
-            format!(
-                "PID{}",
-                sort_arrow(ProcSortField::Pid, app.proc_sort_field, app.proc_sort_asc)
-            ),
-            format!(
-                "CPU%{}",
-                sort_arrow(ProcSortField::Cpu, app.proc_sort_field, app.proc_sort_asc)
-            ),
-            format!(
-                "Memory{}",
-                sort_arrow(
-                    ProcSortField::Memory,
-                    app.proc_sort_field,
-                    app.proc_sort_asc
-                )
-            ),
-            format!(
-                "Virtual{}",
-                sort_arrow(
-                    ProcSortField::VirtualMemory,
-                    app.proc_sort_field,
-                    app.proc_sort_asc
-                )
-            ),
-            format!(
-                "Time{}",
-                sort_arrow(
-                    ProcSortField::RunTime,
-                    app.proc_sort_field,
-                    app.proc_sort_asc
-                )
-            ),
-            format!(
-                "Status{}",
-                sort_arrow(
-                    ProcSortField::Status,
-                    app.proc_sort_field,
-                    app.proc_sort_asc
-                )
-            ),
-        ]))
+        .header(Row::new(PROC_HEADERS.iter().map(|&(label, field)| {
+            Cell::from(format!(
+                "{}{}",
+                label,
+                sort_arrow(field, app.proc_sort_field, app.proc_sort_asc)
+            ))
+        })))
         .block(Block::bordered().title(format!(
             " Processes ({}/{}) ",
             filtered.len(),
@@ -931,18 +902,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let status = Paragraph::new(status_bar_text(app)).fg(Color::Gray);
     frame.render_widget(&status, status_area);
 
-    if app.kill_feedback.is_some() {
-        if let Some(ref fb) = app.kill_feedback {
-            render_kill_feedback(frame, tab_area, fb);
-        }
-        app.kill_feedback = None;
+    if let Some(fb) = app.kill_feedback.take() {
+        render_kill_feedback(frame, tab_area, &fb);
     }
 
     if app.help_visible {
         render_help(frame, tab_area);
     }
 
-    if app.kill_pending && !app.kill_is_sigkill {
+    if app.kill_state == Some(KillState::Confirm) {
         let pid = app.selected_pid.unwrap_or(0);
         let name = app.selected_name.as_deref().unwrap_or("?");
         render_kill_confirm(frame, tab_area, pid, name);
@@ -1230,8 +1198,6 @@ mod tests {
     #[test]
     fn status_bar_context_searchable_tabs() {
         let mut app = App::new();
-        app.kill_feedback = None;
-        app.kill_pending = false;
         app.help_visible = false;
 
         app.active_tab = Tab::Proc;
@@ -1254,8 +1220,6 @@ mod tests {
     #[test]
     fn status_bar_context_kill_only_on_proc() {
         let mut app = App::new();
-        app.kill_feedback = None;
-        app.kill_pending = false;
         app.help_visible = false;
 
         app.active_tab = Tab::Proc;

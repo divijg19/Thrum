@@ -5,6 +5,14 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
+use sysinfo::Signal;
+
+macro_rules! fatal {
+    ($($arg:tt)*) => {{
+        eprintln!("error: {}", format_args!($($arg)*));
+        std::process::exit(1);
+    }};
+}
 
 pub const PAGE_SIZE: usize = 10;
 pub const WINDOW: usize = 60;
@@ -18,6 +26,12 @@ pub enum ProcSortField {
     VirtualMemory,
     RunTime,
     Status,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KillState {
+    Confirm,
+    Dispatch(Signal),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -77,7 +91,7 @@ impl Tab {
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -94,9 +108,7 @@ pub struct App {
     pub proc_selection: usize,
     pub selected_pid: Option<u32>,
     pub selected_name: Option<String>,
-    pub kill_pending: bool,
-    pub kill_is_sigkill: bool,
-    pub kill_execute: bool,
+    pub kill_state: Option<KillState>,
     pub proc_query: String,
     pub proc_search_focused: bool,
     pub net_query: String,
@@ -128,9 +140,7 @@ impl App {
             proc_selection: 0,
             selected_pid: None,
             selected_name: None,
-            kill_pending: false,
-            kill_is_sigkill: false,
-            kill_execute: false,
+            kill_state: None,
             proc_query: String::new(),
             proc_search_focused: false,
             net_query: String::new(),
@@ -149,6 +159,16 @@ impl App {
         self.active_tab = cfg.default_tab;
         self.sidebar_visible = !cfg.hide_sidebar;
     }
+
+    const SORT_MAP: &[(char, ProcSortField, bool)] = &[
+        ('n', ProcSortField::Name, true),
+        ('p', ProcSortField::Pid, true),
+        ('c', ProcSortField::Cpu, false),
+        ('m', ProcSortField::Memory, false),
+        ('v', ProcSortField::VirtualMemory, false),
+        ('t', ProcSortField::RunTime, false),
+        ('s', ProcSortField::Status, true),
+    ];
 
     #[allow(clippy::too_many_lines)]
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -184,14 +204,34 @@ impl App {
             }
         }
 
-        if self.kill_pending {
-            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
-                self.kill_execute = true;
+        if self.kill_state == Some(KillState::Confirm) {
+            match key.code {
+                KeyCode::Char('y' | 'Y') => {
+                    self.kill_state = Some(KillState::Dispatch(Signal::Term));
+                }
+                KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.kill_state = Some(KillState::Dispatch(Signal::Kill));
+                }
+                _ => self.kill_state = None,
+            }
+            return;
+        }
+
+        if self.active_tab == Tab::Proc
+            && key.modifiers.is_empty()
+            && let KeyCode::Char(c) = key.code
+        {
+            if c == 'r' {
+                self.proc_sort_asc = !self.proc_sort_asc;
                 return;
             }
-            self.kill_pending = false;
-            self.kill_is_sigkill = false;
-            return;
+            for &(ch, field, asc) in Self::SORT_MAP {
+                if ch == c {
+                    self.proc_sort_field = field;
+                    self.proc_sort_asc = asc;
+                    return;
+                }
+            }
         }
 
         match key.code {
@@ -223,37 +263,6 @@ impl App {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sidebar_visible = !self.sidebar_visible;
             }
-            KeyCode::Char('n') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::Name;
-                self.proc_sort_asc = true;
-            }
-            KeyCode::Char('p') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::Pid;
-                self.proc_sort_asc = true;
-            }
-            KeyCode::Char('c') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::Cpu;
-                self.proc_sort_asc = false;
-            }
-            KeyCode::Char('m') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::Memory;
-                self.proc_sort_asc = false;
-            }
-            KeyCode::Char('r') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_asc = !self.proc_sort_asc;
-            }
-            KeyCode::Char('s') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::Status;
-                self.proc_sort_asc = true;
-            }
-            KeyCode::Char('v') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::VirtualMemory;
-                self.proc_sort_asc = false;
-            }
-            KeyCode::Char('t') if key.modifiers.is_empty() && self.active_tab == Tab::Proc => {
-                self.proc_sort_field = ProcSortField::RunTime;
-                self.proc_sort_asc = false;
-            }
             KeyCode::Up if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_sub(1);
             }
@@ -267,17 +276,13 @@ impl App {
                 self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
             }
             KeyCode::Delete if self.active_tab == Tab::Proc => {
-                self.kill_pending = true;
-                self.kill_is_sigkill = false;
-                self.kill_execute = false;
+                self.kill_state = Some(KillState::Confirm);
             }
             KeyCode::Char('k')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && self.active_tab == Tab::Proc =>
             {
-                self.kill_pending = true;
-                self.kill_is_sigkill = true;
-                self.kill_execute = true;
+                self.kill_state = Some(KillState::Dispatch(Signal::Kill));
             }
             _ => {}
         }
@@ -302,16 +307,14 @@ fn default_config_path() -> Option<PathBuf> {
 
 fn read_config_file(path: &Path) -> Option<Config> {
     let content = fs::read_to_string(path).ok()?;
-    match toml::from_str(&content) {
-        Ok(cfg) => Some(cfg),
-        Err(e) => {
+    toml::from_str(&content)
+        .inspect_err(|e| {
             eprintln!(
                 "warning: config file '{}' has invalid TOML: {e}",
                 path.display()
             );
-            None
-        }
-    }
+        })
+        .ok()
 }
 
 pub fn parse_args(args: &[String]) -> Config {
@@ -350,12 +353,10 @@ pub fn parse_args(args: &[String]) -> Config {
         |path| {
             let p = Path::new(path);
             if !p.exists() {
-                eprintln!("error: config file '{path}' not found");
-                std::process::exit(1);
+                fatal!("config file '{path}' not found");
             }
             read_config_file(p).unwrap_or_else(|| {
-                eprintln!("error: config file '{path}' has invalid TOML");
-                std::process::exit(1);
+                fatal!("config file '{path}' has invalid TOML");
             })
         },
     );
@@ -366,23 +367,19 @@ pub fn parse_args(args: &[String]) -> Config {
             "-r" | "--refresh" => {
                 i += 1;
                 let val = args.get(i).unwrap_or_else(|| {
-                    eprintln!("error: --refresh requires a value");
-                    std::process::exit(1);
+                    fatal!("--refresh requires a value");
                 });
                 cfg.refresh_ms = val.parse().unwrap_or_else(|_| {
-                    eprintln!("error: --refresh must be a positive integer");
-                    std::process::exit(1);
+                    fatal!("--refresh must be a positive integer");
                 });
                 if cfg.refresh_ms == 0 {
-                    eprintln!("error: --refresh must be > 0");
-                    std::process::exit(1);
+                    fatal!("--refresh must be > 0");
                 }
             }
             "-t" | "--tab" => {
                 i += 1;
                 let name = args.get(i).unwrap_or_else(|| {
-                    eprintln!("error: --tab requires a value");
-                    std::process::exit(1);
+                    fatal!("--tab requires a value");
                 });
                 cfg.default_tab = match name.to_lowercase().as_str() {
                     "dash" => Tab::Dash,
@@ -395,8 +392,7 @@ pub fn parse_args(args: &[String]) -> Config {
                     "disk" => Tab::Disk,
                     "mem" => Tab::Mem,
                     _ => {
-                        eprintln!("error: unknown tab '{name}'");
-                        std::process::exit(1);
+                        fatal!("unknown tab '{name}'");
                     }
                 };
             }
@@ -405,14 +401,12 @@ pub fn parse_args(args: &[String]) -> Config {
             }
             "--config" | "-c" => {
                 args.get(i + 1).unwrap_or_else(|| {
-                    eprintln!("error: --config requires a value");
-                    std::process::exit(1);
+                    fatal!("--config requires a value");
                 });
                 i += 1;
             }
             _ => {
-                eprintln!("error: unknown flag '{}'", args[i]);
-                std::process::exit(1);
+                fatal!("unknown flag '{}'", args[i]);
             }
         }
         i += 1;
@@ -457,6 +451,7 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use sysinfo::Signal;
 
     #[test]
     fn tab_has_nine_variants() {
@@ -486,9 +481,7 @@ mod tests {
         assert_eq!(app.proc_selection, 0);
         assert!(app.selected_pid.is_none());
         assert!(app.selected_name.is_none());
-        assert!(!app.kill_pending);
-        assert!(!app.kill_is_sigkill);
-        assert!(!app.kill_execute);
+        assert!(app.kill_state.is_none());
         assert!(app.proc_query.is_empty());
         assert!(!app.proc_search_focused);
         assert!(app.net_query.is_empty());
@@ -676,17 +669,16 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(app.proc_selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(!app.kill_pending);
+        assert!(app.kill_state.is_none());
     }
 
     #[test]
     fn delete_sets_kill_pending_on_proc() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert!(!app.kill_pending);
+        assert!(app.kill_state.is_none());
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(app.kill_pending);
-        assert!(!app.kill_is_sigkill);
+        assert_eq!(app.kill_state, Some(KillState::Confirm));
     }
 
     #[test]
@@ -694,9 +686,7 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
-        assert!(app.kill_pending);
-        assert!(app.kill_is_sigkill);
-        assert!(app.kill_execute);
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
     }
 
     #[test]
@@ -704,9 +694,9 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(app.kill_pending);
+        assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
-        assert!(!app.kill_pending);
+        assert!(app.kill_state.is_none());
     }
 
     #[test]
@@ -714,10 +704,19 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(app.kill_pending);
-        assert!(!app.kill_execute);
+        assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-        assert!(app.kill_execute);
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Term)));
+    }
+
+    #[test]
+    fn kill_pending_sends_sigkill_on_ctrl_k() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert_eq!(app.kill_state, Some(KillState::Confirm));
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
     }
 
     #[test]
@@ -726,7 +725,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::NONE));
-        assert!(app.kill_execute);
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Term)));
     }
 
     #[test]
@@ -737,7 +736,7 @@ mod tests {
         assert!(app.proc_search_focused);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
-        assert!(app.kill_pending);
+        assert_eq!(app.kill_state, Some(KillState::Confirm));
     }
 
     #[test]

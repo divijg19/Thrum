@@ -9,8 +9,6 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event};
 
-use sysinfo::Signal;
-
 mod app;
 mod samplers;
 mod tui;
@@ -86,23 +84,15 @@ fn main() -> std::io::Result<()> {
             && let Event::Key(key) = event::read()?
         {
             app.handle_key(key);
-            if app.kill_pending && app.kill_execute {
-                app.kill_pending = false;
-                app.kill_execute = false;
-                let signal = if app.kill_is_sigkill {
-                    Signal::Kill
+            if let Some(app::KillState::Dispatch(signal)) = app.kill_state.take()
+                && let Some(pid) = app.selected_pid
+            {
+                let ok = samplers.kill_process(pid, signal);
+                app.kill_feedback = Some(if ok {
+                    format!("Killed PID {pid}")
                 } else {
-                    Signal::Term
-                };
-                if let Some(pid) = app.selected_pid {
-                    let ok = samplers.kill_process(pid, signal);
-                    app.kill_feedback = Some(if ok {
-                        format!("Killed PID {pid}")
-                    } else {
-                        format!("Failed to kill PID {pid}")
-                    });
-                }
-                app.kill_is_sigkill = false;
+                    format!("Failed to kill PID {pid}")
+                });
             }
             if app.should_quit {
                 break;
