@@ -1,7 +1,8 @@
 [package]
 name = "thrum"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
+rust-version = "1.87"
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }

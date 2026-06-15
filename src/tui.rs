@@ -749,6 +749,152 @@ fn status_bar_text(app: &App) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
+fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
+    let mut filtered = filter_processes(&app.proc_query, &samples.processes);
+
+    filtered.sort_unstable_by(|a, b| {
+        let ord = match app.proc_sort_field {
+            ProcSortField::Name => a.name.cmp(&b.name),
+            ProcSortField::Pid => a.pid.cmp(&b.pid),
+            ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
+            ProcSortField::Memory => a.memory.cmp(&b.memory),
+            ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
+            ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
+            ProcSortField::Status => a.status.cmp(&b.status),
+        };
+        if app.proc_sort_asc {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+
+    let count = filtered.len();
+    app.proc_selection = app.proc_selection.min(count.saturating_sub(1));
+    app.selected_pid = filtered.get(app.proc_selection).map(|p| p.pid);
+    app.selected_name = filtered.get(app.proc_selection).map(|p| p.name.clone());
+
+    let vis = ((area.height as usize).saturating_sub(3)).saturating_sub(1);
+    if app.proc_selection < app.proc_scroll {
+        app.proc_scroll = app.proc_selection;
+    } else if vis > 0 && app.proc_selection >= app.proc_scroll + vis {
+        app.proc_scroll = app.proc_selection.saturating_add(1).saturating_sub(vis);
+    }
+
+    let search_table_area =
+        render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
+
+    let [table_area, _spark_placeholder] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(search_table_area);
+
+    let scroll = app.proc_scroll.min(count.saturating_sub(1));
+    let max_visible = (table_area.height as usize).saturating_sub(3);
+    let start = scroll;
+    let end = count.min(start + max_visible);
+    let visible = &filtered[start..end];
+    let rel_sel = app.proc_selection.saturating_sub(start);
+
+    let widths: [Constraint; 7] = [
+        Constraint::Fill(1),
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(10),
+    ];
+
+    let rows: Vec<Row> = visible
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let is_selected = i == rel_sel;
+            let style = if is_selected {
+                Style::new().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            let mem_label = if p.memory >= 1_073_741_824 {
+                format!("{:.1}GiB", p.memory as f64 / 1_073_741_824.0)
+            } else {
+                format!("{:.0}MiB", p.memory as f64 / 1_048_576.0)
+            };
+            let virt_label = if p.virtual_memory >= 1_073_741_824 {
+                format!("{:.1}GiB", p.virtual_memory as f64 / 1_073_741_824.0)
+            } else {
+                format!("{:.0}MiB", p.virtual_memory as f64 / 1_048_576.0)
+            };
+            Row::new(vec![
+                Cell::from(p.name.as_str()),
+                Cell::from(format!("{}", p.pid)),
+                Cell::from(Span::styled(
+                    format!("{:.1}", p.cpu),
+                    Style::new().fg(Color::Green),
+                )),
+                Cell::from(Span::styled(mem_label, Style::new().fg(Color::Cyan))),
+                Cell::from(Span::styled(virt_label, Style::new().fg(Color::Magenta))),
+                Cell::from(format_uptime(p.run_time)),
+                Cell::from(p.status.as_str()),
+            ])
+            .style(style)
+        })
+        .collect();
+
+    let table = Table::new(rows, widths)
+        .header(Row::new(vec![
+            format!(
+                "Name{}",
+                sort_arrow(ProcSortField::Name, app.proc_sort_field, app.proc_sort_asc)
+            ),
+            format!(
+                "PID{}",
+                sort_arrow(ProcSortField::Pid, app.proc_sort_field, app.proc_sort_asc)
+            ),
+            format!(
+                "CPU%{}",
+                sort_arrow(ProcSortField::Cpu, app.proc_sort_field, app.proc_sort_asc)
+            ),
+            format!(
+                "Memory{}",
+                sort_arrow(
+                    ProcSortField::Memory,
+                    app.proc_sort_field,
+                    app.proc_sort_asc
+                )
+            ),
+            format!(
+                "Virtual{}",
+                sort_arrow(
+                    ProcSortField::VirtualMemory,
+                    app.proc_sort_field,
+                    app.proc_sort_asc
+                )
+            ),
+            format!(
+                "Time{}",
+                sort_arrow(
+                    ProcSortField::RunTime,
+                    app.proc_sort_field,
+                    app.proc_sort_asc
+                )
+            ),
+            format!(
+                "Status{}",
+                sort_arrow(
+                    ProcSortField::Status,
+                    app.proc_sort_field,
+                    app.proc_sort_asc
+                )
+            ),
+        ]))
+        .block(Block::bordered().title(format!(
+            " Processes ({}/{}) ",
+            filtered.len(),
+            samples.processes.len(),
+        )));
+    frame.render_widget(table, table_area);
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let block = if app.sidebar_visible {
         Block::bordered().title(" Thrum ")
@@ -772,152 +918,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, tab_area, app, samples),
-        Tab::Proc => {
-            let mut filtered = filter_processes(&app.proc_query, &samples.processes);
-
-            filtered.sort_unstable_by(|a, b| {
-                let ord = match app.proc_sort_field {
-                    ProcSortField::Name => a.name.cmp(&b.name),
-                    ProcSortField::Pid => a.pid.cmp(&b.pid),
-                    ProcSortField::Cpu => a.cpu.total_cmp(&b.cpu),
-                    ProcSortField::Memory => a.memory.cmp(&b.memory),
-                    ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
-                    ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
-                    ProcSortField::Status => a.status.cmp(&b.status),
-                };
-                if app.proc_sort_asc {
-                    ord
-                } else {
-                    ord.reverse()
-                }
-            });
-
-            let count = filtered.len();
-            app.proc_selection = app.proc_selection.min(count.saturating_sub(1));
-            app.selected_pid = filtered.get(app.proc_selection).map(|p| p.pid);
-            app.selected_name = filtered.get(app.proc_selection).map(|p| p.name.clone());
-
-            let vis = ((tab_area.height as usize).saturating_sub(3)).saturating_sub(1);
-            if app.proc_selection < app.proc_scroll {
-                app.proc_scroll = app.proc_selection;
-            } else if vis > 0 && app.proc_selection >= app.proc_scroll + vis {
-                app.proc_scroll = app.proc_selection.saturating_add(1).saturating_sub(vis);
-            }
-
-            let search_table_area =
-                render_search_bar(frame, tab_area, &app.proc_query, app.proc_search_focused);
-
-            let [table_area, _spark_placeholder] =
-                Layout::vertical([Constraint::Fill(1), Constraint::Length(3)])
-                    .areas(search_table_area);
-
-            let scroll = app.proc_scroll.min(count.saturating_sub(1));
-            let max_visible = (table_area.height as usize).saturating_sub(3);
-            let start = scroll;
-            let end = count.min(start + max_visible);
-            let visible = &filtered[start..end];
-            let rel_sel = app.proc_selection.saturating_sub(start);
-
-            let widths: [Constraint; 7] = [
-                Constraint::Fill(1),
-                Constraint::Length(7),
-                Constraint::Length(7),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(10),
-            ];
-
-            let rows: Vec<Row> = visible
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let is_selected = i == rel_sel;
-                    let style = if is_selected {
-                        Style::new().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    };
-                    let mem_label = if p.memory >= 1_073_741_824 {
-                        format!("{:.1}GiB", p.memory as f64 / 1_073_741_824.0)
-                    } else {
-                        format!("{:.0}MiB", p.memory as f64 / 1_048_576.0)
-                    };
-                    let virt_label = if p.virtual_memory >= 1_073_741_824 {
-                        format!("{:.1}GiB", p.virtual_memory as f64 / 1_073_741_824.0)
-                    } else {
-                        format!("{:.0}MiB", p.virtual_memory as f64 / 1_048_576.0)
-                    };
-                    Row::new(vec![
-                        Cell::from(p.name.as_str()),
-                        Cell::from(format!("{}", p.pid)),
-                        Cell::from(Span::styled(
-                            format!("{:.1}", p.cpu),
-                            Style::new().fg(Color::Green),
-                        )),
-                        Cell::from(Span::styled(mem_label, Style::new().fg(Color::Cyan))),
-                        Cell::from(Span::styled(virt_label, Style::new().fg(Color::Magenta))),
-                        Cell::from(format_uptime(p.run_time)),
-                        Cell::from(p.status.as_str()),
-                    ])
-                    .style(style)
-                })
-                .collect();
-
-            let table = Table::new(rows, widths)
-                .header(Row::new(vec![
-                    format!(
-                        "Name{}",
-                        sort_arrow(ProcSortField::Name, app.proc_sort_field, app.proc_sort_asc)
-                    ),
-                    format!(
-                        "PID{}",
-                        sort_arrow(ProcSortField::Pid, app.proc_sort_field, app.proc_sort_asc)
-                    ),
-                    format!(
-                        "CPU%{}",
-                        sort_arrow(ProcSortField::Cpu, app.proc_sort_field, app.proc_sort_asc)
-                    ),
-                    format!(
-                        "Memory{}",
-                        sort_arrow(
-                            ProcSortField::Memory,
-                            app.proc_sort_field,
-                            app.proc_sort_asc
-                        )
-                    ),
-                    format!(
-                        "Virtual{}",
-                        sort_arrow(
-                            ProcSortField::VirtualMemory,
-                            app.proc_sort_field,
-                            app.proc_sort_asc
-                        )
-                    ),
-                    format!(
-                        "Time{}",
-                        sort_arrow(
-                            ProcSortField::RunTime,
-                            app.proc_sort_field,
-                            app.proc_sort_asc
-                        )
-                    ),
-                    format!(
-                        "Status{}",
-                        sort_arrow(
-                            ProcSortField::Status,
-                            app.proc_sort_field,
-                            app.proc_sort_asc
-                        )
-                    ),
-                ]))
-                .block(Block::bordered().title(format!(
-                    " Processes ({}/{}) ",
-                    filtered.len(),
-                    samples.processes.len(),
-                )));
-            frame.render_widget(table, table_area);
-        }
+        Tab::Proc => render_proc(frame, tab_area, app, samples),
         Tab::Net => render_net(frame, tab_area, app, samples),
         Tab::Files => render_files(frame, tab_area, app, samples),
         Tab::Time => render_time(frame, tab_area, samples),
@@ -1267,5 +1268,45 @@ mod tests {
             !text.contains("Delete Kill"),
             "Dash should not have kill hint"
         );
+    }
+
+    #[test]
+    fn format_timestamp_epoch() {
+        assert_eq!(format_timestamp(0), "1970-01-01 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_one_second() {
+        assert_eq!(format_timestamp(1), "1970-01-01 00:00:01");
+    }
+
+    #[test]
+    fn format_timestamp_end_of_january() {
+        assert_eq!(format_timestamp(2_678_399), "1970-01-31 23:59:59");
+    }
+
+    #[test]
+    fn format_timestamp_february_first() {
+        assert_eq!(format_timestamp(2_678_400), "1970-02-01 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_non_leap_feb_end() {
+        assert_eq!(format_timestamp(5_097_599), "1970-02-28 23:59:59");
+    }
+
+    #[test]
+    fn format_timestamp_march_first_non_leap() {
+        assert_eq!(format_timestamp(5_097_600), "1970-03-01 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_year_boundary() {
+        assert_eq!(format_timestamp(31_536_000), "1971-01-01 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_leap_year_march() {
+        assert_eq!(format_timestamp(68_256_000), "1972-03-01 00:00:00");
     }
 }
