@@ -14,7 +14,7 @@ mod samplers;
 mod tui;
 
 fn main() -> std::io::Result<()> {
-    let cfg = app::parse_args();
+    let cfg = app::parse_args(&std::env::args().skip(1).collect::<Vec<_>>());
     let mut terminal = ratatui::init();
     let mut app = app::App::new();
     app.apply_config(&cfg);
