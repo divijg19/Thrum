@@ -107,6 +107,7 @@ pub struct App {
     pub proc_sort_asc: bool,
     pub should_quit: bool,
     pub help_visible: bool,
+    pub kill_feedback: Option<String>,
 }
 
 impl App {
@@ -140,6 +141,7 @@ impl App {
             proc_sort_asc: false,
             should_quit: false,
             help_visible: false,
+            kill_feedback: None,
         }
     }
 
@@ -530,6 +532,7 @@ mod tests {
         assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
         assert!(!app.proc_sort_asc);
         assert!(!app.help_visible);
+        assert!(app.kill_feedback.is_none());
     }
 
     #[test]
