@@ -1,3 +1,4 @@
+#![deny(unsafe_code, trivial_casts)]
 #![allow(
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units

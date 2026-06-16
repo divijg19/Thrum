@@ -758,7 +758,6 @@ fn status_bar_text(app: &App) -> String {
     parts.join(" | ")
 }
 
-#[allow(clippy::too_many_lines)]
 fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mut filtered = filter_processes(&app.proc_query, &samples.processes);
 
