@@ -96,6 +96,8 @@ pub struct Samplers {
     components: Components,
     prev_iface_rx: HashMap<String, u64>,
     prev_iface_tx: HashMap<String, u64>,
+    prev_disk_read: HashMap<String, u64>,
+    prev_disk_write: HashMap<String, u64>,
     hostname: String,
     os: String,
     kernel: String,
@@ -112,13 +114,23 @@ impl Samplers {
             prev_iface_rx.insert(name.clone(), data.total_received());
             prev_iface_tx.insert(name.clone(), data.total_transmitted());
         }
+        let disks = Disks::new_with_refreshed_list();
+        let mut prev_disk_read = HashMap::new();
+        let mut prev_disk_write = HashMap::new();
+        for d in disks.list() {
+            let usage = d.usage();
+            prev_disk_read.insert(d.mount_point().display().to_string(), usage.read_bytes);
+            prev_disk_write.insert(d.mount_point().display().to_string(), usage.written_bytes);
+        }
         Self {
             sys: System::new(),
             networks,
-            disks: Disks::new_with_refreshed_list(),
+            disks,
             components: Components::new_with_refreshed_list(),
             prev_iface_rx,
             prev_iface_tx,
+            prev_disk_read,
+            prev_disk_write,
             hostname: System::host_name().unwrap_or_default(),
             os: System::long_os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_default(),
@@ -127,7 +139,7 @@ impl Samplers {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     pub fn sample(&mut self, refresh_proc: bool) -> Samples {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -232,22 +244,41 @@ impl Samplers {
 
         disks.sort_by(|a, b| a.mount.cmp(&b.mount));
 
-        let disk_io: Vec<DiskIoInfo> = self
-            .disks
-            .list()
-            .iter()
-            .map(|d| {
-                let usage = d.usage();
-                DiskIoInfo {
-                    mount_point: d.mount_point().display().to_string(),
-                    read_rate: usage.read_bytes,
-                    write_rate: usage.written_bytes,
-                }
-            })
-            .collect();
+        let mut disk_io: Vec<DiskIoInfo> = Vec::new();
+        let mut disk_read_rate = 0u64;
+        let mut disk_write_rate = 0u64;
+        for d in self.disks.list() {
+            let usage = d.usage();
+            let mount_point = d.mount_point().display().to_string();
+            let read_cum = usage.read_bytes;
+            let write_cum = usage.written_bytes;
 
-        let disk_read_rate: u64 = disk_io.iter().map(|d| d.read_rate).sum();
-        let disk_write_rate: u64 = disk_io.iter().map(|d| d.write_rate).sum();
+            let prev_read = self
+                .prev_disk_read
+                .entry(mount_point.clone())
+                .or_insert(read_cum);
+            let prev_write = self
+                .prev_disk_write
+                .entry(mount_point.clone())
+                .or_insert(write_cum);
+            let read_rate = read_cum.saturating_sub(*prev_read);
+            let write_rate = write_cum.saturating_sub(*prev_write);
+            disk_read_rate += read_rate;
+            disk_write_rate += write_rate;
+            *prev_read = read_cum;
+            *prev_write = write_cum;
+
+            disk_io.push(DiskIoInfo {
+                mount_point,
+                read_rate,
+                write_rate,
+            });
+        }
+
+        self.prev_disk_read
+            .retain(|k, _| disk_io.iter().any(|d| d.mount_point == *k));
+        self.prev_disk_write
+            .retain(|k, _| disk_io.iter().any(|d| d.mount_point == *k));
 
         let mut temperatures: Vec<TempInfo> = self
             .components

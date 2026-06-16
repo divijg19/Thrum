@@ -1,8 +1,14 @@
 [package]
 name = "thrum"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2024"
 rust-version = "1.96"
+description = "A terminal system monitor with dashboards for processes, network, disk, CPU, memory, and more"
+license = "MIT"
+authors = ["Divij Gupta"]
+repository = "https://github.com/divijg19/Thrum"
+keywords = ["system-monitor", "terminal", "tui", "dashboard"]
+categories = ["command-line-utilities", "monitoring"]
 
 [dependencies]
 ratatui = { version = "0.30.1", default-features = false, features = ["crossterm"] }
