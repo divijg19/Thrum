@@ -194,8 +194,8 @@ impl Samplers {
             let prev_tx = self.prev_iface_tx.entry(name.clone()).or_insert(tx_cum);
             let rx_rate = rx_cum.saturating_sub(*prev_rx);
             let tx_rate = tx_cum.saturating_sub(*prev_tx);
-            net_rx_rate += rx_rate;
-            net_tx_rate += tx_rate;
+            net_rx_rate = net_rx_rate.saturating_add(rx_rate);
+            net_tx_rate = net_tx_rate.saturating_add(tx_rate);
             *prev_rx = rx_cum;
             *prev_tx = tx_cum;
             interfaces.push(NetInfo {
@@ -263,8 +263,8 @@ impl Samplers {
                 .or_insert(write_cum);
             let read_rate = read_cum.saturating_sub(*prev_read);
             let write_rate = write_cum.saturating_sub(*prev_write);
-            disk_read_rate += read_rate;
-            disk_write_rate += write_rate;
+            disk_read_rate = disk_read_rate.saturating_add(read_rate);
+            disk_write_rate = disk_write_rate.saturating_add(write_rate);
             *prev_read = read_cum;
             *prev_write = write_cum;
 

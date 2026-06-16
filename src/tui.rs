@@ -72,7 +72,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 
     let g = Gauge::default()
         .gauge_style(Style::new().fg(Color::Green))
-        .percent(samples.cpu_usage as u16)
+        .percent((samples.cpu_usage.min(100.0)) as u16)
         .label(format!("CPU: {:.1}%", samples.cpu_usage));
     frame.render_widget(&g, cpu_area);
 
@@ -357,7 +357,7 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 
     let swap_total_gb = samples.swap_total as f64 / 1_073_741_824.0;
     let swap_used_gb = samples.swap_used as f64 / 1_073_741_824.0;
-    let swap_free = samples.swap_total - samples.swap_used;
+    let swap_free = samples.swap_total.saturating_sub(samples.swap_used);
     let swap_free_gb = swap_free as f64 / 1_073_741_824.0;
 
     let swap_used_pct = if samples.swap_total > 0 {
@@ -484,7 +484,7 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
         if let Some(chunk) = chunks.get(i) {
             let gauge = Gauge::default()
                 .gauge_style(Style::new().fg(Color::Blue))
-                .percent(cpu.usage as u16)
+                .percent((cpu.usage.min(100.0)) as u16)
                 .label(format!("{}  {:.1}%  {}MHz", cpu.label, cpu.usage, cpu.freq));
             frame.render_widget(&gauge, *chunk);
         }
