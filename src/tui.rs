@@ -731,31 +731,57 @@ fn render_help(frame: &mut Frame, area: Rect) {
     frame.render_widget(&p, centered);
 }
 
-fn status_bar_text(app: &App) -> String {
-    if let Some(ref fb) = app.kill_feedback {
-        return fb.clone();
+struct StatusBar {
+    ctx: String,
+    hints: Vec<&'static str>,
+}
+
+impl StatusBar {
+    fn build(app: &App) -> Self {
+        if let Some(ref fb) = app.kill_feedback {
+            return Self {
+                ctx: fb.clone(),
+                hints: vec![],
+            };
+        }
+        if app.help_visible {
+            return Self {
+                ctx: " ? Close help".to_owned(),
+                hints: vec![],
+            };
+        }
+        if app.kill_state == Some(KillState::Confirm) {
+            return Self {
+                ctx: " Kill? y/Y Yes | any key Cancel".to_owned(),
+                hints: vec![],
+            };
+        }
+        let mut hints = vec![" ? Help", " q/Ctrl+C Quit"];
+        let sidebar = if app.sidebar_visible {
+            "Ctrl+S Hide Sidebar"
+        } else {
+            "Ctrl+S Show Sidebar"
+        };
+        hints.push(sidebar);
+        if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+            hints.push("/ Search");
+        }
+        if app.active_tab == Tab::Proc {
+            hints.push("Delete Kill");
+            hints.push("Ctrl+K Kill!");
+        }
+        Self {
+            ctx: String::new(),
+            hints,
+        }
     }
-    if app.help_visible {
-        return " ? Close help".to_owned();
+
+    fn display(&self) -> String {
+        if !self.ctx.is_empty() {
+            return self.ctx.clone();
+        }
+        self.hints.join(" | ")
     }
-    if app.kill_state == Some(KillState::Confirm) {
-        return " Kill? y/Y Yes | any key Cancel".to_owned();
-    }
-    let mut parts: Vec<&str> = vec![" ? Help", " q/Ctrl+C Quit"];
-    let sidebar_hint = if app.sidebar_visible {
-        "Ctrl+S Hide Sidebar"
-    } else {
-        "Ctrl+S Show Sidebar"
-    };
-    parts.push(sidebar_hint);
-    if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
-        parts.push("/ Search");
-    }
-    if app.active_tab == Tab::Proc {
-        parts.push("Delete Kill");
-        parts.push("Ctrl+K Kill!");
-    }
-    parts.join(" | ")
 }
 
 fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
@@ -898,7 +924,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         Tab::Mem => render_mem(frame, tab_area, app, samples),
     }
 
-    let status = Paragraph::new(status_bar_text(app)).fg(Color::Gray);
+    let status = Paragraph::new(StatusBar::build(app).display()).fg(Color::Gray);
     frame.render_widget(&status, status_area);
 
     if let Some(fb) = app.kill_feedback.take() {
@@ -1200,19 +1226,19 @@ mod tests {
         app.help_visible = false;
 
         app.active_tab = Tab::Proc;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(text.contains("/ Search"), "Proc should have search hint");
 
         app.active_tab = Tab::Net;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(text.contains("/ Search"), "Net should have search hint");
 
         app.active_tab = Tab::Files;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(text.contains("/ Search"), "Files should have search hint");
 
         app.active_tab = Tab::Dash;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(!text.contains("/ Search"), "Dash must not have search hint");
     }
 
@@ -1222,15 +1248,74 @@ mod tests {
         app.help_visible = false;
 
         app.active_tab = Tab::Proc;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(text.contains("Delete Kill"), "Proc should have kill hint");
 
         app.active_tab = Tab::Dash;
-        let text = status_bar_text(&app);
+        let text = StatusBar::build(&app).display();
         assert!(
             !text.contains("Delete Kill"),
             "Dash should not have kill hint"
         );
+    }
+
+    #[test]
+    fn status_bar_help_hint_present() {
+        let app = App::new();
+        let text = StatusBar::build(&app).display();
+        assert!(
+            text.contains("? Help"),
+            "status bar should include help hint"
+        );
+    }
+
+    #[test]
+    fn status_bar_quit_hint_present() {
+        let app = App::new();
+        let text = StatusBar::build(&app).display();
+        assert!(
+            text.contains("q/Ctrl+C Quit"),
+            "status bar should include quit hint"
+        );
+    }
+
+    #[test]
+    fn status_bar_sidebar_hints_match() {
+        let mut app = App::new();
+        app.sidebar_visible = true;
+        assert!(
+            StatusBar::build(&app).display().contains("Hide Sidebar"),
+            "should say 'Hide Sidebar' when visible"
+        );
+        app.sidebar_visible = false;
+        assert!(
+            StatusBar::build(&app).display().contains("Show Sidebar"),
+            "should say 'Show Sidebar' when hidden"
+        );
+    }
+
+    #[test]
+    fn status_bar_help_mode_text() {
+        let mut app = App::new();
+        app.help_visible = true;
+        assert_eq!(StatusBar::build(&app).display(), " ? Close help");
+    }
+
+    #[test]
+    fn status_bar_kill_confirm_text() {
+        let mut app = App::new();
+        app.kill_state = Some(KillState::Confirm);
+        assert_eq!(
+            StatusBar::build(&app).display(),
+            " Kill? y/Y Yes | any key Cancel"
+        );
+    }
+
+    #[test]
+    fn status_bar_kill_feedback_text() {
+        let mut app = App::new();
+        app.kill_feedback = Some("Killed PID 1234".to_owned());
+        assert_eq!(StatusBar::build(&app).display(), "Killed PID 1234");
     }
 
     #[test]
