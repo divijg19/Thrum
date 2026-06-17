@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{App, KillState, ProcSortField, Tab};
+use crate::app::{App, KillState, ProcSortField, Tab, TabOrientation};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
@@ -810,6 +810,23 @@ impl StatusBar {
     }
 }
 
+fn render_horizontal_tabs(frame: &mut Frame, area: Rect, app: &App) {
+    let mut spans = Vec::with_capacity(Tab::ALL.len() * 2 - 1);
+    for (i, tab) in Tab::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │ ", Style::new().fg(Color::DarkGray)));
+        }
+        let is_active = tab == &app.active_tab;
+        let style = if is_active {
+            Style::new().fg(tab_color(*tab)).bold()
+        } else {
+            Style::new().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(tab.label(), style));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mut filtered = filter_processes(&app.proc_query, &samples.processes);
 
@@ -918,21 +935,30 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
-    let block = if app.sidebar_visible {
-        Block::bordered().title(" Thrum ")
-    } else {
-        Block::bordered().title(format!(" Thrum | {} ", app.active_tab.label()))
+    let block = match app.tab_orientation {
+        TabOrientation::Horizontal => Block::bordered().title(" Thrum "),
+        TabOrientation::Sidebar if app.sidebar_visible => Block::bordered().title(" Thrum "),
+        TabOrientation::Sidebar => {
+            Block::bordered().title(format!(" Thrum | {} ", app.active_tab.label()))
+        }
     };
     frame.render_widget(&block, frame.area());
     let inner = block.inner(frame.area());
 
-    let content_area = if app.sidebar_visible {
-        let [sidebar_area, content_area] =
-            Layout::horizontal([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
-        render_sidebar(frame, sidebar_area, app);
-        content_area
-    } else {
-        inner
+    let content_area = match app.tab_orientation {
+        TabOrientation::Sidebar if app.sidebar_visible => {
+            let [sidebar_area, content_area] =
+                Layout::horizontal([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
+            render_sidebar(frame, sidebar_area, app);
+            content_area
+        }
+        TabOrientation::Horizontal if app.tab_bar_visible => {
+            let [tab_area, content_area] =
+                Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+            render_horizontal_tabs(frame, tab_area, app);
+            content_area
+        }
+        _ => inner,
     };
 
     let [tab_area, status_area] =
