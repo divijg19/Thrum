@@ -1,4 +1,5 @@
 #![deny(unsafe_code, trivial_casts)]
+#![expect(clippy::multiple_crate_versions)] // ratatui→kasuari→hashbrown 0.16 vs ratatui→hashbrown 0.17
 #![allow(
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units
@@ -95,7 +96,8 @@ fn main() -> std::io::Result<()> {
             && let Event::Key(key) = event::read()?
         {
             app.handle_key(key);
-            if let Some(app::KillState::Dispatch(signal)) = app.kill_state.take()
+            let kill_dispatch = app.kill_state.take();
+            if let Some(app::KillState::Dispatch(signal)) = kill_dispatch
                 && let Some(pid) = app.selected_pid
             {
                 let ok = samplers.kill_process(pid, signal);
@@ -104,6 +106,8 @@ fn main() -> std::io::Result<()> {
                 } else {
                     format!("Failed to kill PID {pid}")
                 });
+            } else if matches!(kill_dispatch, Some(app::KillState::Dispatch(_))) {
+                app.kill_feedback = Some("No process selected".to_owned());
             }
             if app.should_quit {
                 break;
