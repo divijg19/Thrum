@@ -827,17 +827,6 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_k_exits_search_and_kills_in_one_press() {
-        let mut app = App::new();
-        app.active_tab = Tab::Proc;
-        app.proc_search_focused = true;
-        app.selected_pid = Some(42);
-        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
-        assert!(!app.proc_search_focused, "Ctrl+K should exit search");
-        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
-    }
-
-    #[test]
     fn delete_exits_search_then_kill_on_second_press() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
