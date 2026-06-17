@@ -695,7 +695,8 @@ fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'s
 fn render_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
-        Line::from("  ?            Toggle help           Ctrl+S          Toggle sidebar"),
+        Line::from("  ?            Toggle help           Ctrl+T          Cycle orientation"),
+        Line::from("  \u{2190}/\u{2192}    Prev/next tab         Ctrl+S          Toggle sbar/tbar"),
         Line::from("  Tab          Next tab               Shift+Tab       Previous tab"),
         Line::from(format!("  1-{}          Jump to tab", Tab::ALL.len())),
         Line::from("  /            Search / Filter       Esc             Clear"),
@@ -936,7 +937,9 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let block = match app.tab_orientation {
-        TabOrientation::Horizontal => Block::bordered().title(" Thrum "),
+        TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
+            Block::bordered().title(" Thrum ")
+        }
         TabOrientation::Sidebar if app.sidebar_visible => Block::bordered().title(" Thrum "),
         TabOrientation::Sidebar => {
             Block::bordered().title(format!(" Thrum | {} ", app.active_tab.label()))
@@ -961,8 +964,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         _ => inner,
     };
 
-    let [tab_area, status_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(content_area);
+    let has_footer = app.tab_orientation == TabOrientation::HorizontalFooter && app.tab_bar_visible;
+
+    let (tab_area, status_area) = if has_footer {
+        let chunks = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(content_area);
+        render_horizontal_tabs(frame, chunks[1], app);
+        (chunks[0], chunks[2])
+    } else {
+        let chunks =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(content_area);
+        (chunks[0], chunks[1])
+    };
 
     match app.active_tab {
         Tab::Dash => render_dash(frame, tab_area, app, samples),

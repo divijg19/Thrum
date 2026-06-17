@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sysinfo::{
     Components, Disks, InterfaceOperationalState, Networks, Pid, ProcessStatus, ProcessesToUpdate,
@@ -179,8 +179,10 @@ impl Samplers {
                     data.operational_state(),
                     data.mac_address().to_string(),
                     data.ip_networks()
-                        .first()
-                        .map_or(String::new(), ToString::to_string),
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 )
             })
             .collect();
@@ -214,10 +216,11 @@ impl Samplers {
             });
         }
 
+        let iface_names: HashSet<&str> = interfaces.iter().map(|i| i.name.as_str()).collect();
         self.prev_iface_rx
-            .retain(|k, _| interfaces.iter().any(|i| i.name == *k));
+            .retain(|k, _| iface_names.contains(k.as_str()));
         self.prev_iface_tx
-            .retain(|k, _| interfaces.iter().any(|i| i.name == *k));
+            .retain(|k, _| iface_names.contains(k.as_str()));
 
         let mut disks: Vec<DiskInfo> = self
             .disks
@@ -275,10 +278,11 @@ impl Samplers {
             });
         }
 
+        let mount_points: HashSet<&str> = disk_io.iter().map(|d| d.mount_point.as_str()).collect();
         self.prev_disk_read
-            .retain(|k, _| disk_io.iter().any(|d| d.mount_point == *k));
+            .retain(|k, _| mount_points.contains(k.as_str()));
         self.prev_disk_write
-            .retain(|k, _| disk_io.iter().any(|d| d.mount_point == *k));
+            .retain(|k, _| mount_points.contains(k.as_str()));
 
         let mut temperatures: Vec<TempInfo> = self
             .components
