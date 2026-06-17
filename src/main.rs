@@ -4,7 +4,8 @@
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units
     clippy::cast_sign_loss,            // unsigned counters always non-negative
-    clippy::similar_names              // intentional: mem_used/mem_total etc.
+    clippy::similar_names,             // intentional: mem_used/mem_total etc.
+    clippy::uninlined_format_args      // intentional: positional args are more readable
 )]
 
 use std::time::Duration;

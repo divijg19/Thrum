@@ -193,18 +193,24 @@ impl App {
         let search_tab = |tab: Tab, focused: &mut bool, query: &mut String| -> bool {
             *focused && self.active_tab == tab && handle_search_input(query, focused, key)
         };
-        if search_tab(
-            Tab::Proc,
-            &mut self.proc_search_focused,
-            &mut self.proc_query,
-        ) || search_tab(Tab::Net, &mut self.net_search_focused, &mut self.net_query)
-            || search_tab(
-                Tab::Files,
-                &mut self.files_search_focused,
-                &mut self.files_query,
-            )
-        {
-            return;
+        let search_consumed =
+            search_tab(
+                Tab::Proc,
+                &mut self.proc_search_focused,
+                &mut self.proc_query,
+            ) || search_tab(Tab::Net, &mut self.net_search_focused, &mut self.net_query)
+                || search_tab(
+                    Tab::Files,
+                    &mut self.files_search_focused,
+                    &mut self.files_query,
+                );
+
+        if search_consumed {
+            let is_ctrl_k =
+                key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL);
+            if !is_ctrl_k {
+                return;
+            }
         }
 
         if self.help_visible {
