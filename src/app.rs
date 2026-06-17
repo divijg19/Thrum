@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use serde::Deserialize;
 use sysinfo::Signal;
 
@@ -17,7 +17,8 @@ pub enum CliAction {
     Config(Config),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProcSortField {
     Name,
     Pid,
@@ -131,6 +132,8 @@ pub struct App {
     pub should_quit: bool,
     pub help_visible: bool,
     pub kill_feedback: Option<String>,
+    pub paused: bool,
+    pub history_window: usize,
 }
 
 impl App {
@@ -165,13 +168,18 @@ impl App {
             should_quit: false,
             help_visible: false,
             kill_feedback: None,
+            paused: false,
+            history_window: WINDOW,
         }
     }
 
-    pub const fn apply_config(&mut self, cfg: &Config) {
+    pub fn apply_config(&mut self, cfg: &Config) {
         self.active_tab = cfg.default_tab;
         self.sidebar_visible = !cfg.hide_sidebar;
         self.tab_orientation = cfg.tab_orientation;
+        self.proc_sort_field = cfg.proc_sort_default;
+        self.proc_sort_asc = cfg.proc_sort_asc_default;
+        self.history_window = cfg.history_window;
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -230,6 +238,11 @@ impl App {
                 }
                 _ => self.kill_state = None,
             }
+            return;
+        }
+
+        if key.code == KeyCode::Char(' ') && key.modifiers.is_empty() {
+            self.paused = !self.paused;
             return;
         }
 
@@ -333,6 +346,49 @@ impl App {
             _ => {}
         }
     }
+
+    pub fn handle_mouse(&mut self, col: u16, row: u16, kind: MouseEventKind) {
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) => self.handle_click(col, row),
+            MouseEventKind::ScrollUp if self.active_tab == Tab::Proc => {
+                self.proc_selection = self.proc_selection.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown if self.active_tab == Tab::Proc => {
+                self.proc_selection = self.proc_selection.saturating_add(3);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_click(&mut self, col: u16, row: u16) {
+        if self.tab_orientation == TabOrientation::Sidebar
+            && self.sidebar_visible
+            && (1..=9).contains(&col)
+            && row >= 1
+        {
+            let idx = (row - 1) as usize;
+            if idx < Tab::ALL.len() {
+                self.active_tab = Tab::ALL[idx];
+                return;
+            }
+        }
+
+        if self.active_tab == Tab::Proc {
+            let tab_y: u16 = match self.tab_orientation {
+                TabOrientation::Horizontal if self.tab_bar_visible => 2,
+                _ => 1,
+            };
+            let search_h: u16 = if !self.proc_query.is_empty() || self.proc_search_focused {
+                3
+            } else {
+                0
+            };
+            let data_start = tab_y + search_h + 2;
+            if row >= data_start {
+                self.proc_selection = self.proc_scroll.saturating_add((row - data_start) as usize);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -342,6 +398,9 @@ pub struct Config {
     pub default_tab: Tab,
     pub hide_sidebar: bool,
     pub tab_orientation: TabOrientation,
+    pub proc_sort_default: ProcSortField,
+    pub proc_sort_asc_default: bool,
+    pub history_window: usize,
 }
 
 impl Default for Config {
@@ -351,6 +410,9 @@ impl Default for Config {
             default_tab: Tab::Dash,
             hide_sidebar: false,
             tab_orientation: TabOrientation::Sidebar,
+            proc_sort_default: ProcSortField::Cpu,
+            proc_sort_asc_default: false,
+            history_window: 60,
         }
     }
 }
@@ -542,7 +604,6 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use sysinfo::Signal;
 
     #[test]
@@ -1054,6 +1115,7 @@ mod tests {
             default_tab: Tab::Proc,
             hide_sidebar: false,
             tab_orientation: TabOrientation::Sidebar,
+            ..Config::default()
         };
         app.apply_config(&cfg);
         assert_eq!(app.active_tab, Tab::Proc);
@@ -1069,6 +1131,7 @@ mod tests {
             default_tab: Tab::Dash,
             hide_sidebar: true,
             tab_orientation: TabOrientation::Sidebar,
+            ..Config::default()
         };
         app.apply_config(&cfg);
         assert!(!app.sidebar_visible);
@@ -1439,5 +1502,180 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    // --- Pause/Freeze ---
+
+    #[test]
+    fn space_toggles_paused() {
+        let mut app = App::new();
+        assert!(!app.paused);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(app.paused);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(!app.paused);
+    }
+
+    #[test]
+    fn space_works_on_any_tab() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(app.paused);
+        app.active_tab = Tab::Net;
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(!app.paused);
+    }
+
+    // --- Mouse sidebar click ---
+
+    #[test]
+    fn mouse_click_sidebar_switches_tab() {
+        let mut app = App::new();
+        assert_eq!(app.active_tab, Tab::Dash);
+        // Click on tab index 1 (Proc) at col=5, row=2
+        app.handle_mouse(5, 2, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Proc);
+        // Click on tab index 8 (Mem) at col=5, row=9
+        app.handle_mouse(5, 9, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Mem);
+        // Click on tab index 0 (Dash) at col=5, row=1
+        app.handle_mouse(5, 1, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn mouse_click_outside_sidebar_ignored() {
+        let mut app = App::new();
+        app.handle_mouse(10, 2, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_mouse(5, 0, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_mouse(5, 10, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn mouse_click_sidebar_hidden_ignored() {
+        let mut app = App::new();
+        app.sidebar_visible = false;
+        app.handle_mouse(5, 2, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    // --- Mouse scroll ---
+
+    #[test]
+    fn mouse_scroll_up_on_proc_moves_selection_up() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.proc_selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.proc_selection, 2);
+    }
+
+    #[test]
+    fn mouse_scroll_down_on_proc_moves_selection_down() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.proc_selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(app.proc_selection, 8);
+    }
+
+    #[test]
+    fn mouse_scroll_wraps_at_zero() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.proc_selection = 1;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.proc_selection, 0);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.proc_selection, 0);
+    }
+
+    #[test]
+    fn mouse_scroll_noop_on_non_proc() {
+        let mut app = App::new();
+        app.active_tab = Tab::Dash;
+        app.proc_selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(app.proc_selection, 5);
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(app.proc_selection, 5);
+    }
+
+    // --- Mouse other events ignored ---
+
+    #[test]
+    fn mouse_up_drag_moved_ignored() {
+        let mut app = App::new();
+        app.handle_mouse(5, 2, MouseEventKind::Up(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_mouse(5, 2, MouseEventKind::Drag(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+        app.handle_mouse(5, 2, MouseEventKind::Moved);
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    // --- Config expansion ---
+
+    #[test]
+    fn config_deserialize_proc_sort() {
+        let toml_str = "proc_sort_default = \"name\"\nproc_sort_asc_default = true\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.proc_sort_default, ProcSortField::Name);
+        assert!(cfg.proc_sort_asc_default);
+    }
+
+    #[test]
+    fn config_deserialize_history_window() {
+        let toml_str = "history_window = 120\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.history_window, 120);
+    }
+
+    #[test]
+    fn config_deserialize_proc_sort_all_fields() {
+        let cases: [(&str, ProcSortField); 7] = [
+            ("name", ProcSortField::Name),
+            ("pid", ProcSortField::Pid),
+            ("cpu", ProcSortField::Cpu),
+            ("memory", ProcSortField::Memory),
+            ("virtual_memory", ProcSortField::VirtualMemory),
+            ("run_time", ProcSortField::RunTime),
+            ("status", ProcSortField::Status),
+        ];
+        for (name, expected) in &cases {
+            let toml_str = format!("proc_sort_default = \"{name}\"");
+            let cfg: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(cfg.proc_sort_default, *expected, "sort field '{name}'");
+        }
+    }
+
+    #[test]
+    fn apply_config_sets_proc_sort() {
+        let mut app = App::new();
+        assert_eq!(app.proc_sort_field, ProcSortField::Cpu);
+        let cfg = Config {
+            proc_sort_default: ProcSortField::Memory,
+            proc_sort_asc_default: true,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.proc_sort_field, ProcSortField::Memory);
+        assert!(app.proc_sort_asc);
+    }
+
+    #[test]
+    fn apply_config_sets_history_window() {
+        let mut app = App::new();
+        assert_eq!(app.history_window, 60);
+        let cfg = Config {
+            history_window: 120,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.history_window, 120);
     }
 }
