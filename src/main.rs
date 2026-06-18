@@ -58,82 +58,105 @@ fn main() -> std::io::Result<()> {
     loop {
         if !app.paused {
             let refresh_proc = app.active_tab == app::Tab::Proc;
-            last_samples = samplers.sample(refresh_proc);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                last_samples = samplers.sample(refresh_proc)
+            }));
+            match result {
+                Ok(()) => {
+                    app.error_msg = None;
 
-            app::push_bounded(
-                &mut app.cpu_history,
-                last_samples.cpu_usage as u64,
-                app.history_window,
-            );
+                    app::push_bounded(
+                        &mut app.cpu_history,
+                        last_samples.cpu_usage as u64,
+                        app.history_window,
+                    );
 
-            let mem_pct = if last_samples.mem_total > 0 {
-                (last_samples.mem_used as f64 / last_samples.mem_total as f64 * 100.0) as u64
-            } else {
-                0
-            };
-            app::push_bounded(&mut app.mem_history, mem_pct, app.history_window);
+                    let mem_pct = if last_samples.mem_total > 0 {
+                        (last_samples.mem_used as f64 / last_samples.mem_total as f64 * 100.0)
+                            as u64
+                    } else {
+                        0
+                    };
+                    app::push_bounded(&mut app.mem_history, mem_pct, app.history_window);
 
-            app::push_bounded(
-                &mut app.net_rx_history,
-                last_samples.net_rx_rate,
-                app.history_window,
-            );
-            app::push_bounded(
-                &mut app.net_tx_history,
-                last_samples.net_tx_rate,
-                app.history_window,
-            );
+                    app::push_bounded(
+                        &mut app.net_rx_history,
+                        last_samples.net_rx_rate,
+                        app.history_window,
+                    );
+                    app::push_bounded(
+                        &mut app.net_tx_history,
+                        last_samples.net_tx_rate,
+                        app.history_window,
+                    );
 
-            app::push_bounded(
-                &mut app.disk_read_history,
-                last_samples.disk_read_rate,
-                app.history_window,
-            );
-            app::push_bounded(
-                &mut app.disk_write_history,
-                last_samples.disk_write_rate,
-                app.history_window,
-            );
+                    app::push_bounded(
+                        &mut app.disk_read_history,
+                        last_samples.disk_read_rate,
+                        app.history_window,
+                    );
+                    app::push_bounded(
+                        &mut app.disk_write_history,
+                        last_samples.disk_write_rate,
+                        app.history_window,
+                    );
 
-            let valid_temps: Vec<f32> = last_samples
-                .temperatures
-                .iter()
-                .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
-                .collect();
-            let avg_temp = if valid_temps.is_empty() {
-                0.0
-            } else {
-                valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
-            };
-            app::push_bounded(
-                &mut app.temp_history,
-                (avg_temp * 10.0) as u64,
-                app.history_window,
-            );
+                    let valid_temps: Vec<f32> = last_samples
+                        .temperatures
+                        .iter()
+                        .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
+                        .collect();
+                    let avg_temp = if valid_temps.is_empty() {
+                        0.0
+                    } else {
+                        valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
+                    };
+                    app::push_bounded(
+                        &mut app.temp_history,
+                        (avg_temp * 10.0) as u64,
+                        app.history_window,
+                    );
 
-            let avg_usage = if last_samples.disks.is_empty() {
-                0.0
-            } else {
-                last_samples.disks.iter().map(|d| d.usage_pct).sum::<f32>()
-                    / last_samples.disks.len() as f32
-            };
-            app::push_bounded(
-                &mut app.disk_usage_history,
-                (avg_usage * 10.0) as u64,
-                app.history_window,
-            );
+                    let avg_usage = if last_samples.disks.is_empty() {
+                        0.0
+                    } else {
+                        last_samples.disks.iter().map(|d| d.usage_pct).sum::<f32>()
+                            / last_samples.disks.len() as f32
+                    };
+                    app::push_bounded(
+                        &mut app.disk_usage_history,
+                        (avg_usage * 10.0) as u64,
+                        app.history_window,
+                    );
 
-            let swap_pct = if last_samples.swap_total > 0 {
-                (last_samples.swap_used as f64 / last_samples.swap_total as f64 * 100.0) as u64
-            } else {
-                0
-            };
-            app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
+                    let swap_pct = if last_samples.swap_total > 0 {
+                        (last_samples.swap_used as f64 / last_samples.swap_total as f64 * 100.0)
+                            as u64
+                    } else {
+                        0
+                    };
+                    app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
+                }
+                Err(e) => {
+                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "sampling failed".to_owned()
+                    };
+                    app.error_msg = Some(msg);
+                }
+            }
         }
 
         terminal.draw(|f| tui::draw(f, &mut app, &last_samples))?;
 
         if event::poll(refresh)? {
+            if let Ok((w, h)) = crossterm::terminal::size() {
+                app.term_width = w;
+                app.term_height = h;
+            }
             match event::read()? {
                 Event::Key(key) => {
                     app.handle_key(key);

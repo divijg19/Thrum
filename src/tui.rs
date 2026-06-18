@@ -712,7 +712,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  v            Sort by virtual mem     t               Sort by run time"),
         Line::from("  s            Sort by status          r               Toggle sort order"),
         Line::from("  \u{2191}/\u{2193}    Select (Proc)           PgUp/PgDn       Page select"),
-        Line::from("  Delete      Kill process (SIGTERM)    Ctrl+K       Kill now (SIGKILL)"),
+        Line::from("  Delete      Kill dialog               Ctrl+K       Kill now (SIGKILL)"),
         Line::from("  q / Ctrl+C  Quit"),
         Line::from(""),
         Line::from("  Press ? to close"),
@@ -771,7 +771,19 @@ impl StatusBar {
             let name = app.selected_name.as_deref().unwrap_or("?");
             return Self {
                 ctx: format!("Kill? PID {pid} ({name})"),
-                hints: vec!["y/Y Yes".to_owned(), "any Cancel".to_owned()],
+                hints: vec![
+                    "1 SIGTERM".to_owned(),
+                    "2 SIGKILL".to_owned(),
+                    "3-6 More".to_owned(),
+                    "any Cancel".to_owned(),
+                ],
+            };
+        }
+
+        if let Some(ref err) = app.error_msg {
+            return Self {
+                ctx: format!("Error: {err}"),
+                hints: vec![],
             };
         }
 
@@ -1092,9 +1104,10 @@ fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
         Line::from(""),
         Line::from(format!("  Kill PID {pid} ({name})?")),
         Line::from(""),
-        Line::from("  y/Y    Send SIGTERM"),
-        Line::from("  Ctrl+K Send SIGKILL immediately"),
-        Line::from("  any    Cancel"),
+        Line::from("  1  SIGTERM    2  SIGKILL"),
+        Line::from("  3  SIGINT      4  SIGHUP"),
+        Line::from("  5  SIGSTOP    6  SIGCONT"),
+        Line::from("  any  Cancel"),
         Line::from(""),
     ];
 
@@ -1108,7 +1121,7 @@ fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
 
     let [_, centered, _] = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Min(40),
+        Constraint::Min(42),
         Constraint::Fill(1),
     ])
     .areas(inner);
@@ -1580,5 +1593,39 @@ mod tests {
             hints.contains("Ctrl+K"),
             "Ctrl+K hint preserved when PID selected"
         );
+    }
+
+    // --- Status bar error_msg ---
+
+    #[test]
+    fn status_bar_shows_error_msg() {
+        let mut app = App::new();
+        app.error_msg = Some("sampling failed".to_owned());
+        let (ctx, hints) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Error: sampling failed");
+        assert!(hints.is_empty(), "no hints when showing error");
+    }
+
+    #[test]
+    fn status_bar_paused_takes_priority_over_error() {
+        let mut app = App::new();
+        app.error_msg = Some("disk error".to_owned());
+        app.paused = true;
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(
+            ctx, "PAUSED (Space to resume)",
+            "paused wins over error_msg"
+        );
+    }
+
+    #[test]
+    fn status_bar_kill_confirm_takes_priority_over_error() {
+        let mut app = App::new();
+        app.error_msg = Some("stale data".to_owned());
+        app.kill_state = Some(KillState::Confirm);
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        let (ctx, _) = StatusBar::build(&app).display();
+        assert_eq!(ctx, "Kill? PID 42 (bash)", "kill confirm wins over error");
     }
 }

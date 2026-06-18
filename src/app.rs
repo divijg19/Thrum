@@ -134,6 +134,9 @@ pub struct App {
     pub kill_feedback: Option<String>,
     pub paused: bool,
     pub history_window: usize,
+    pub term_width: u16,
+    pub term_height: u16,
+    pub error_msg: Option<String>,
 }
 
 impl App {
@@ -170,6 +173,9 @@ impl App {
             kill_feedback: None,
             paused: false,
             history_window: WINDOW,
+            term_width: 80,
+            term_height: 24,
+            error_msg: None,
         }
     }
 
@@ -230,12 +236,14 @@ impl App {
 
         if self.kill_state == Some(KillState::Confirm) {
             match key.code {
-                KeyCode::Char('y' | 'Y') => {
-                    self.kill_state = Some(KillState::Dispatch(Signal::Term));
+                KeyCode::Char('1') => self.kill_state = Some(KillState::Dispatch(Signal::Term)),
+                KeyCode::Char('2') => self.kill_state = Some(KillState::Dispatch(Signal::Kill)),
+                KeyCode::Char('3') => {
+                    self.kill_state = Some(KillState::Dispatch(Signal::Interrupt))
                 }
-                KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.kill_state = Some(KillState::Dispatch(Signal::Kill));
-                }
+                KeyCode::Char('4') => self.kill_state = Some(KillState::Dispatch(Signal::Hangup)),
+                KeyCode::Char('5') => self.kill_state = Some(KillState::Dispatch(Signal::Stop)),
+                KeyCode::Char('6') => self.kill_state = Some(KillState::Dispatch(Signal::Continue)),
                 _ => self.kill_state = None,
             }
             return;
@@ -369,6 +377,27 @@ impl App {
             let idx = (row - 1) as usize;
             if idx < Tab::ALL.len() {
                 self.active_tab = Tab::ALL[idx];
+                return;
+            }
+        }
+
+        if self.tab_orientation == TabOrientation::Horizontal && self.tab_bar_visible && row == 1 {
+            let tab_width = self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16);
+            let idx = col.saturating_sub(1) / tab_width;
+            if (idx as usize) < Tab::ALL.len() {
+                self.active_tab = Tab::ALL[idx as usize];
+                return;
+            }
+        }
+
+        if self.tab_orientation == TabOrientation::HorizontalFooter
+            && self.tab_bar_visible
+            && row == self.term_height.saturating_sub(3)
+        {
+            let tab_width = self.term_width.saturating_sub(2) / (Tab::ALL.len() as u16);
+            let idx = col.saturating_sub(1) / tab_width;
+            if (idx as usize) < Tab::ALL.len() {
+                self.active_tab = Tab::ALL[idx as usize];
                 return;
             }
         }
@@ -653,6 +682,9 @@ mod tests {
         assert!(!app.proc_sort_asc);
         assert!(!app.help_visible);
         assert!(app.kill_feedback.is_none());
+        assert_eq!(app.term_width, 80);
+        assert_eq!(app.term_height, 24);
+        assert!(app.error_msg.is_none());
     }
 
     #[test]
@@ -856,35 +888,65 @@ mod tests {
     }
 
     #[test]
-    fn kill_pending_confirmed_by_y() {
+    fn kill_pending_confirmed_by_one() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
-        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Term)));
     }
 
     #[test]
-    fn kill_pending_sends_sigkill_on_ctrl_k() {
+    fn kill_pending_sends_sigkill_by_two() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
-        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
     }
 
     #[test]
-    fn kill_pending_confirmed_by_capital_y() {
+    fn kill_pending_sends_sigint_by_three() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.selected_pid = Some(42);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        app.handle_key(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::NONE));
-        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Term)));
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Interrupt)));
+    }
+
+    #[test]
+    fn kill_pending_sends_sighup_by_four() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE));
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Hangup)));
+    }
+
+    #[test]
+    fn kill_pending_sends_sigstop_by_five() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Stop)));
+    }
+
+    #[test]
+    fn kill_pending_sends_sigcont_by_six() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.selected_pid = Some(42);
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE));
+        assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Continue)));
     }
 
     #[test]
@@ -1616,6 +1678,60 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_mouse(5, 2, MouseEventKind::Moved);
         assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    // --- Mouse horizontal tab bar click ---
+
+    #[test]
+    fn mouse_click_horizontal_switches_tab() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::Horizontal;
+        app.tab_bar_visible = true;
+        app.term_width = 80;
+        // term_width=80, area_width=78, tab_width=78/9=8
+        // Tab 0 (Dash): cols 1-8
+        // Tab 1 (Proc): cols 9-16
+        // Tab 2 (Net): cols 17-24
+        // Click on tab 1 (Proc) at col=10, row=1
+        app.handle_mouse(10, 1, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Proc);
+        // Click on tab 0 (Dash) at col=5, row=1
+        app.handle_mouse(5, 1, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn mouse_click_horizontal_tab_bar_hidden_ignored() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::Horizontal;
+        app.tab_bar_visible = false;
+        app.term_width = 80;
+        app.handle_mouse(10, 1, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn mouse_click_horizontal_wrong_row_ignored() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::Horizontal;
+        app.tab_bar_visible = true;
+        app.term_width = 80;
+        app.handle_mouse(10, 2, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Dash);
+    }
+
+    #[test]
+    fn mouse_click_footer_switches_tab() {
+        let mut app = App::new();
+        app.tab_orientation = TabOrientation::HorizontalFooter;
+        app.tab_bar_visible = true;
+        app.term_width = 80;
+        app.term_height = 24;
+        // footer tab bar at row = term_height - 3 = 21
+        // tab_width = 78/9 = 8
+        // Click on tab 8 (Mem) at col=70, row=21
+        app.handle_mouse(70, 21, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(app.active_tab, Tab::Mem);
     }
 
     // --- Config expansion ---
