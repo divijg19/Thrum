@@ -287,7 +287,9 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') if key.modifiers.is_empty() => self.should_quit = true,
-            KeyCode::Char('?') => self.help_visible = !self.help_visible,
+            KeyCode::Char('?') if key.modifiers.is_empty() => {
+                self.help_visible = !self.help_visible;
+            }
             KeyCode::Tab => {
                 let idx = self.active_tab.index();
                 self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
@@ -296,15 +298,15 @@ impl App {
                 let idx = self.active_tab.index();
                 self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
             }
-            KeyCode::Char('1') => self.active_tab = Tab::Dash,
-            KeyCode::Char('2') => self.active_tab = Tab::Proc,
-            KeyCode::Char('3') => self.active_tab = Tab::Net,
-            KeyCode::Char('4') => self.active_tab = Tab::Files,
-            KeyCode::Char('5') => self.active_tab = Tab::Time,
-            KeyCode::Char('6') => self.active_tab = Tab::Temp,
-            KeyCode::Char('7') => self.active_tab = Tab::Cores,
-            KeyCode::Char('8') => self.active_tab = Tab::Disk,
-            KeyCode::Char('9') => self.active_tab = Tab::Mem,
+            KeyCode::Char('1') if key.modifiers.is_empty() => self.active_tab = Tab::Dash,
+            KeyCode::Char('2') if key.modifiers.is_empty() => self.active_tab = Tab::Proc,
+            KeyCode::Char('3') if key.modifiers.is_empty() => self.active_tab = Tab::Net,
+            KeyCode::Char('4') if key.modifiers.is_empty() => self.active_tab = Tab::Files,
+            KeyCode::Char('5') if key.modifiers.is_empty() => self.active_tab = Tab::Time,
+            KeyCode::Char('6') if key.modifiers.is_empty() => self.active_tab = Tab::Temp,
+            KeyCode::Char('7') if key.modifiers.is_empty() => self.active_tab = Tab::Cores,
+            KeyCode::Char('8') if key.modifiers.is_empty() => self.active_tab = Tab::Disk,
+            KeyCode::Char('9') if key.modifiers.is_empty() => self.active_tab = Tab::Mem,
             KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
                 Tab::Proc => self.proc_search_focused = true,
                 Tab::Net => self.net_search_focused = true,
@@ -328,15 +330,23 @@ impl App {
             }
             KeyCode::Up if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_sub(1);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             KeyCode::Down if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(1);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             KeyCode::PageUp if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_sub(PAGE_SIZE);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             KeyCode::PageDown if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             KeyCode::Right
                 if matches!(
@@ -375,9 +385,13 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => self.handle_click(col, row),
             MouseEventKind::ScrollUp if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_sub(3);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             MouseEventKind::ScrollDown if self.active_tab == Tab::Proc => {
                 self.proc_selection = self.proc_selection.saturating_add(3);
+                self.selected_pid = None;
+                self.selected_name = None;
             }
             _ => {}
         }
@@ -431,6 +445,8 @@ impl App {
             if row >= data_start {
                 let offset = (row - data_start) as usize;
                 self.proc_selection = self.proc_scroll.saturating_add(offset.min(1000));
+                self.selected_pid = None;
+                self.selected_name = None;
             }
         }
     }
@@ -639,6 +655,10 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
             *focused = false;
             true
         }
+        KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+            *focused = false;
+            false
+        }
         _ => {
             *focused = false;
             true
@@ -797,6 +817,20 @@ mod tests {
     }
 
     #[test]
+    fn key_ctrl_1_does_not_jump_tab() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL));
+        assert_eq!(app.active_tab, Tab::Dash, "Ctrl+1 should not change tab");
+    }
+
+    #[test]
+    fn key_alt_question_does_not_toggle_help() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::ALT));
+        assert!(!app.help_visible, "Alt+? should not toggle help");
+    }
+
+    #[test]
     fn key_ctrl_s_toggles_sidebar() {
         let mut app = App::new();
         assert!(app.sidebar_visible);
@@ -826,6 +860,28 @@ mod tests {
     }
 
     #[test]
+    fn selected_pid_cleared_on_down() {
+        let mut app = App::new();
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(app.selected_pid.is_none());
+        assert!(app.selected_name.is_none());
+    }
+
+    #[test]
+    fn selected_pid_cleared_on_up() {
+        let mut app = App::new();
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert!(app.selected_pid.is_none());
+        assert!(app.selected_name.is_none());
+    }
+
+    #[test]
     fn selection_moves_up() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
@@ -852,6 +908,17 @@ mod tests {
     }
 
     #[test]
+    fn selected_pid_cleared_on_page_down() {
+        let mut app = App::new();
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert!(app.selected_pid.is_none());
+        assert!(app.selected_name.is_none());
+    }
+
+    #[test]
     fn selection_page_up() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
@@ -861,6 +928,18 @@ mod tests {
         assert_eq!(app.proc_selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
         assert_eq!(app.proc_selection, 0);
+    }
+
+    #[test]
+    fn selected_pid_cleared_on_page_up() {
+        let mut app = App::new();
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
+        assert!(app.selected_pid.is_none());
+        assert!(app.selected_name.is_none());
     }
 
     #[test]
@@ -1071,6 +1150,21 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(!app.proc_search_focused);
         assert_eq!(app.proc_query, "f");
+    }
+
+    #[test]
+    fn search_arrows_exit_and_move_selection() {
+        let mut app = App::new();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.proc_search_focused);
+        assert_eq!(app.proc_selection, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(!app.proc_search_focused, "Down exits search");
+        assert_eq!(
+            app.proc_selection, 1,
+            "Down moves selection after exiting search"
+        );
     }
 
     #[test]
@@ -1655,6 +1749,17 @@ mod tests {
     }
 
     // --- Mouse scroll ---
+
+    #[test]
+    fn selected_pid_cleared_on_scroll() {
+        let mut app = App::new();
+        app.active_tab = Tab::Proc;
+        app.selected_pid = Some(42);
+        app.selected_name = Some("bash".to_owned());
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert!(app.selected_pid.is_none(), "scroll clears selected_pid");
+        assert!(app.selected_name.is_none(), "scroll clears selected_name");
+    }
 
     #[test]
     fn mouse_scroll_up_on_proc_moves_selection_up() {
