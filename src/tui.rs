@@ -149,7 +149,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 }
 
 fn format_bytes(bytes: u64) -> String {
-    let s = if bytes >= 1_000_000_000_000 {
+    if bytes >= 1_000_000_000_000 {
         format!("{:.1}TB", bytes as f64 / 1_000_000_000_000.0)
     } else if bytes >= 1_000_000_000 {
         format!("{:.1}GB", bytes as f64 / 1_000_000_000.0)
@@ -159,8 +159,7 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1}KB", bytes as f64 / 1_000.0)
     } else {
         format!("{bytes}B")
-    };
-    format!("{s:>12}")
+    }
 }
 
 fn format_disk_size(bytes: u64) -> String {
@@ -202,14 +201,27 @@ fn format_uptime(secs: u64) -> String {
 }
 
 fn format_timestamp(secs: u64) -> String {
-    let days = secs / 86400;
+    let days_raw = secs / 86400;
     let rem = secs % 86400;
     let hour = rem / 3600;
     let min = (rem % 3600) / 60;
     let sec = rem % 60;
 
+    let max_year = 2999u64;
+    let max_cumulative = {
+        let mut d = 0u64;
+        for y in 1970..=max_year {
+            d += 365;
+            if y.is_multiple_of(4) && !y.is_multiple_of(100) || y.is_multiple_of(400) {
+                d += 1;
+            }
+        }
+        d - 1
+    };
+    let day = days_raw.min(max_cumulative);
+
     let mut year = 1970u64;
-    let mut day = days;
+    let mut day = day;
     loop {
         let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
         let diy = if leap { 366 } else { 365 };
@@ -1142,32 +1154,42 @@ mod tests {
 
     #[test]
     fn format_bytes_zero() {
-        assert_eq!(format_bytes(0), format!("{:>12}", "0B"));
+        assert_eq!(format_bytes(0), "0B");
     }
 
     #[test]
     fn format_bytes_bytes() {
-        assert_eq!(format_bytes(500), format!("{:>12}", "500B"));
+        assert_eq!(format_bytes(500), "500B");
     }
 
     #[test]
     fn format_bytes_kilobytes() {
-        assert_eq!(format_bytes(1500), format!("{:>12}", "1.5KB"));
+        assert_eq!(format_bytes(1500), "1.5KB");
     }
 
     #[test]
     fn format_bytes_megabytes() {
-        assert_eq!(format_bytes(2_000_000), format!("{:>12}", "2.0MB"));
+        assert_eq!(format_bytes(2_000_000), "2.0MB");
     }
 
     #[test]
     fn format_bytes_gigabytes() {
-        assert_eq!(format_bytes(2_000_000_000), format!("{:>12}", "2.0GB"));
+        assert_eq!(format_bytes(2_000_000_000), "2.0GB");
     }
 
     #[test]
     fn format_bytes_terabytes() {
-        assert_eq!(format_bytes(2_000_000_000_000), format!("{:>12}", "2.0TB"));
+        assert_eq!(format_bytes(2_000_000_000_000), "2.0TB");
+    }
+
+    #[test]
+    fn format_bytes_large_no_overflow() {
+        let result = format_bytes(18_446_744_073_709_551_615);
+        assert!(
+            !result.contains("  "),
+            "no extra whitespace padding: {result:?}"
+        );
+        assert!(result.ends_with("TB"), "largest value is in TB");
     }
 
     #[test]
@@ -1498,6 +1520,15 @@ mod tests {
     #[test]
     fn format_timestamp_year_boundary() {
         assert_eq!(format_timestamp(31_536_000), "1971-01-01 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_far_future_capped() {
+        let result = format_timestamp(1_000_000_000_000);
+        assert!(
+            result.starts_with("2999-"),
+            "far-future timestamps capped at year 2999, got: {result}"
+        );
     }
 
     #[test]

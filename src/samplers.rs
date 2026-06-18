@@ -34,6 +34,7 @@ pub struct DiskInfo {
     pub kind: String,
 }
 
+#[derive(Default)]
 pub struct SysInfo {
     pub hostname: String,
     pub os: String,
@@ -65,6 +66,7 @@ pub struct TempInfo {
     pub critical: Option<f32>,
 }
 
+#[derive(Default)]
 pub struct Samples {
     pub cpu_usage: f32,
     pub mem_used: u64,
@@ -135,7 +137,7 @@ impl Samplers {
             os: System::long_os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_default(),
             arch: System::cpu_arch(),
-            physical_cores: System::physical_core_count().unwrap_or(0),
+            physical_cores: System::physical_core_count().unwrap_or(1),
         }
     }
 
