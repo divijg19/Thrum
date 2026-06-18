@@ -29,12 +29,15 @@ refresh_ms = 1000
 default_tab = "proc"
 hide_sidebar = true
 tab_orientation = "sidebar"    # sidebar, horizontal, horizontal_footer
+proc_sort_default = "cpu"      # name, pid, cpu, memory, virtual_memory, run_time, status
+proc_sort_asc_default = false  # sort ascending (false = descending)
+history_window = 60            # data points for sparkline history (min 1)
 ```
 
 CLI flags override config file values.
 
 ```sh
-cargo run
+cargo run -- --refresh 500 --tab proc --tabs horizontal
 ```
 
 See what moves.

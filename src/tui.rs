@@ -73,10 +73,10 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let g = Gauge::default()
         .gauge_style(Style::new().fg(Color::Green))
         .percent((samples.cpu_usage.min(100.0)) as u16)
-        .label(format!("CPU: {:.1}%", samples.cpu_usage));
+        .label(format!("CPU: {:.1}%", samples.cpu_usage.min(100.0)));
     frame.render_widget(&g, cpu_area);
 
-    let mem_pct_f = samples.mem_used as f64 / samples.mem_total.max(1) as f64 * 100.0;
+    let mem_pct_f = (samples.mem_used as f64 / samples.mem_total.max(1) as f64 * 100.0).min(100.0);
     let mem_pct = mem_pct_f as u16;
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
@@ -89,7 +89,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&mem_g, mem_area);
 
     let (swap_pct, swap_label) = if samples.swap_total > 0 {
-        let pct = samples.swap_used as f64 / samples.swap_total as f64 * 100.0;
+        let pct = (samples.swap_used as f64 / samples.swap_total as f64 * 100.0).min(100.0);
         let used_gb = samples.swap_used as f64 / 1_073_741_824.0;
         let total_gb = samples.swap_total as f64 / 1_073_741_824.0;
         (
@@ -178,8 +178,8 @@ fn format_disk_size(bytes: u64) -> String {
 
 fn format_temp(temp: Option<f32>) -> String {
     temp.filter(|t| t.is_finite()).map_or_else(
-        || format!("{:>8}", "N/A"),
-        |t| format!("{:>8}", format!("{:.1}°C", t)),
+        || format!("{:>9}", "N/A"),
+        |t| format!("{:>9}", format!("{:.1}°C", t)),
     )
 }
 
@@ -438,9 +438,9 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
 fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(8),
+        Constraint::Length(9),
+        Constraint::Length(9),
+        Constraint::Length(9),
     ];
 
     let rows: Vec<Row> = samples
@@ -703,10 +703,13 @@ fn render_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
         Line::from("  ?            Toggle help           Ctrl+T          Cycle orientation"),
-        Line::from("  \u{2190}/\u{2192}    Prev/next tab         Ctrl+S          Toggle sbar/tbar"),
+        Line::from(
+            "  \u{2190}/\u{2192}    Prev/next tab (h)     Ctrl+S          Toggle sidebar/tab bar",
+        ),
         Line::from("  Tab          Next tab               Shift+Tab       Previous tab"),
         Line::from(format!("  1-{}          Jump to tab", Tab::ALL.len())),
         Line::from("  /            Search / Filter       Esc             Clear"),
+        Line::from("  Space        Pause / Resume"),
         Line::from("  n            Sort by name            p               Sort by PID"),
         Line::from("  c            Sort by CPU             m               Sort by memory"),
         Line::from("  v            Sort by virtual mem     t               Sort by run time"),
@@ -715,6 +718,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  Delete      Kill dialog               Ctrl+K       Kill now (SIGKILL)"),
         Line::from("  q / Ctrl+C  Quit"),
         Line::from(""),
+        Line::from("  (h)  horizontal tab modes only"),
         Line::from("  Press ? to close"),
     ];
 
@@ -791,7 +795,7 @@ impl StatusBar {
             let label = app.active_tab.label();
             let sort = if app.active_tab == Tab::Proc {
                 let arrow = if app.proc_sort_asc { "↑" } else { "↓" };
-                Some(format!(" [{} {:?}{}]", label, app.proc_sort_field, arrow))
+                Some(format!(" [{} {}{}]", label, app.proc_sort_field, arrow))
             } else {
                 None
             };
@@ -901,17 +905,17 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     app.selected_pid = filtered.get(app.proc_selection).map(|p| p.pid);
     app.selected_name = filtered.get(app.proc_selection).map(|p| p.name.clone());
 
-    let vis = ((area.height as usize).saturating_sub(3)).saturating_sub(1);
+    let search_table_area =
+        render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
+
+    let table_area = search_table_area;
+
+    let vis = (table_area.height as usize).saturating_sub(4);
     if app.proc_selection < app.proc_scroll {
         app.proc_scroll = app.proc_selection;
     } else if vis > 0 && app.proc_selection >= app.proc_scroll + vis {
         app.proc_scroll = app.proc_selection.saturating_add(1).saturating_sub(vis);
     }
-
-    let search_table_area =
-        render_search_bar(frame, area, &app.proc_query, app.proc_search_focused);
-
-    let table_area = search_table_area;
 
     let clamped_scroll = app.proc_scroll.min(count.saturating_sub(1));
     let max_visible = (table_area.height as usize).saturating_sub(3);
@@ -1228,23 +1232,23 @@ mod tests {
 
     #[test]
     fn format_temp_value() {
-        assert_eq!(format_temp(Some(65.0)), "  65.0°C");
-        assert_eq!(format_temp(Some(0.0)), "   0.0°C");
+        assert_eq!(format_temp(Some(65.0)), "   65.0°C");
+        assert_eq!(format_temp(Some(0.0)), "    0.0°C");
     }
 
     #[test]
     fn format_temp_none() {
-        assert_eq!(format_temp(None), "     N/A");
+        assert_eq!(format_temp(None), "      N/A");
     }
 
     #[test]
     fn format_temp_nan() {
-        assert_eq!(format_temp(Some(f32::NAN)), "     N/A");
+        assert_eq!(format_temp(Some(f32::NAN)), "      N/A");
     }
 
     #[test]
     fn format_temp_large() {
-        assert_eq!(format_temp(Some(100.5)), " 100.5°C");
+        assert_eq!(format_temp(Some(100.5)), "  100.5°C");
     }
 
     #[test]
