@@ -32,7 +32,7 @@ mod tui;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cfg = match app::parse_args(&args) {
+    let mut cfg = match app::parse_args(&args) {
         app::CliAction::Help => {
             app::print_help();
             return Ok(());
@@ -57,6 +57,7 @@ fn main() -> std::io::Result<()> {
         prev_hook(info);
     }));
     let mut app = app::App::new();
+    app.error_msg = cfg.config_warning.take();
     app.apply_config(&cfg);
     if let Ok((w, h)) = crossterm::terminal::size() {
         app.term_width = w;
@@ -177,12 +178,7 @@ fn main() -> std::io::Result<()> {
                     if let Some(app::KillState::Dispatch(signal)) = kill_dispatch
                         && let Some(pid) = app.selected_pid
                     {
-                        let ok = samplers.kill_process(pid, signal);
-                        app.kill_feedback = Some(if ok {
-                            format!("Killed PID {pid}")
-                        } else {
-                            format!("Failed to kill PID {pid}")
-                        });
+                        app.kill_feedback = Some(samplers.kill_process(pid, signal).message(pid));
                     } else if matches!(kill_dispatch, Some(app::KillState::Dispatch(_))) {
                         app.kill_feedback = Some("No process selected".to_owned());
                     }

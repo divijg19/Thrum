@@ -24,6 +24,24 @@ pub struct NetInfo {
     pub ip: String,
 }
 
+pub enum KillResult {
+    Killed,
+    NotFound,
+    PermissionDenied,
+    SelfTarget,
+}
+
+impl KillResult {
+    pub fn message(&self, pid: u32) -> String {
+        match self {
+            Self::Killed => format!("Killed PID {pid}"),
+            Self::NotFound => format!("PID {pid} not found"),
+            Self::PermissionDenied => format!("Permission denied for PID {pid}"),
+            Self::SelfTarget => "Cannot kill thrum itself".to_owned(),
+        }
+    }
+}
+
 pub struct DiskInfo {
     pub device: String,
     pub mount: String,
@@ -349,14 +367,19 @@ impl Samplers {
         }
     }
 
-    pub fn kill_process(&self, pid: u32, signal: Signal) -> bool {
+    pub fn kill_process(&self, pid: u32, signal: Signal) -> KillResult {
         let sys_pid = Pid::from(pid as usize);
         if sys_pid == Pid::from(std::process::id() as usize) {
-            return false;
+            return KillResult::SelfTarget;
         }
-        self.sys
-            .process(sys_pid)
-            .is_some_and(|p| p.kill_with(signal).unwrap_or(false))
+        match self.sys.process(sys_pid) {
+            Some(p) => match p.kill_with(signal) {
+                Some(true) => KillResult::Killed,
+                Some(false) => KillResult::NotFound,
+                None => KillResult::PermissionDenied,
+            },
+            None => KillResult::NotFound,
+        }
     }
 }
 
@@ -456,5 +479,19 @@ mod tests {
         assert_eq!(info.state, "Up");
         assert_eq!(info.mac, "00:11:22:33:44:55");
         assert_eq!(info.ip, "192.168.1.1/24");
+    }
+
+    #[test]
+    fn kill_result_messages() {
+        assert_eq!(KillResult::Killed.message(42), "Killed PID 42");
+        assert_eq!(KillResult::NotFound.message(42), "PID 42 not found");
+        assert_eq!(
+            KillResult::PermissionDenied.message(42),
+            "Permission denied for PID 42"
+        );
+        assert_eq!(
+            KillResult::SelfTarget.message(42),
+            "Cannot kill thrum itself"
+        );
     }
 }

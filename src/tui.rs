@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{App, KillState, ProcSortField, Tab, TabOrientation};
+use crate::app::{App, KillState, MAX_QUERY_LEN, ProcSortField, Tab, TabOrientation};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
@@ -291,7 +291,12 @@ fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) 
                 vec![]
             }
         } else {
-            vec![Span::raw(format!("{query}{cursor}"))]
+            let suffix = if query.len() >= MAX_QUERY_LEN {
+                "\u{2026}"
+            } else {
+                ""
+            };
+            vec![Span::raw(format!("{query}{suffix}{cursor}"))]
         };
         frame.render_widget(
             Paragraph::new(Line::from(content)).block(Block::bordered().title(" Search ")),
