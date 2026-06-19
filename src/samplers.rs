@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
 use sysinfo::{
     Components, Disks, InterfaceOperationalState, Networks, Pid, ProcessStatus, ProcessesToUpdate,
@@ -109,15 +110,50 @@ pub struct Samples {
     pub sys_info: SysInfo,
 }
 
+struct RatePairTracker<K: Eq + Hash> {
+    prev: HashMap<K, (u64, u64)>,
+}
+
+impl<K: Eq + Hash> RatePairTracker<K> {
+    #[allow(dead_code)]
+    fn new() -> Self {
+        Self {
+            prev: HashMap::new(),
+        }
+    }
+
+    fn from_iter(iter: impl Iterator<Item = (K, u64, u64)>) -> Self {
+        let mut prev = HashMap::new();
+        for (key, a, b) in iter {
+            prev.insert(key, (a, b));
+        }
+        Self { prev }
+    }
+
+    fn rate_pair(&mut self, key: K, cum_a: u64, cum_b: u64) -> (u64, u64) {
+        let (prev_a, prev_b) = self.prev.entry(key).or_insert((cum_a, cum_b));
+        let rate_a = cum_a.saturating_sub(*prev_a);
+        let rate_b = cum_b.saturating_sub(*prev_b);
+        *prev_a = cum_a;
+        *prev_b = cum_b;
+        (rate_a, rate_b)
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K) -> bool,
+    {
+        self.prev.retain(|k, _| f(k));
+    }
+}
+
 pub struct Samplers {
     sys: System,
     networks: Networks,
     disks: Disks,
     components: Components,
-    prev_iface_rx: HashMap<String, u64>,
-    prev_iface_tx: HashMap<String, u64>,
-    prev_disk_read: HashMap<String, u64>,
-    prev_disk_write: HashMap<String, u64>,
+    network_rates: RatePairTracker<String>,
+    disk_io_rates: RatePairTracker<String>,
     hostname: String,
     os: String,
     kernel: String,
@@ -128,29 +164,29 @@ pub struct Samplers {
 impl Samplers {
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
-        let mut prev_iface_rx = HashMap::new();
-        let mut prev_iface_tx = HashMap::new();
-        for (name, data) in &networks {
-            prev_iface_rx.insert(name.clone(), data.total_received());
-            prev_iface_tx.insert(name.clone(), data.total_transmitted());
-        }
+        let network_rates = RatePairTracker::from_iter(networks.iter().map(|(name, data)| {
+            (
+                name.clone(),
+                data.total_received(),
+                data.total_transmitted(),
+            )
+        }));
         let disks = Disks::new_with_refreshed_list();
-        let mut prev_disk_read = HashMap::new();
-        let mut prev_disk_write = HashMap::new();
-        for d in disks.list() {
+        let disk_io_rates = RatePairTracker::from_iter(disks.list().iter().map(|d| {
             let usage = d.usage();
-            prev_disk_read.insert(d.mount_point().display().to_string(), usage.read_bytes);
-            prev_disk_write.insert(d.mount_point().display().to_string(), usage.written_bytes);
-        }
+            (
+                d.mount_point().display().to_string(),
+                usage.read_bytes,
+                usage.written_bytes,
+            )
+        }));
         Self {
             sys: System::new(),
             networks,
             disks,
             components: Components::new_with_refreshed_list(),
-            prev_iface_rx,
-            prev_iface_tx,
-            prev_disk_read,
-            prev_disk_write,
+            network_rates,
+            disk_io_rates,
             hostname: System::host_name().unwrap_or_default(),
             os: System::long_os_version().unwrap_or_default(),
             kernel: System::kernel_version().unwrap_or_default(),
@@ -159,7 +195,6 @@ impl Samplers {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
     pub fn sample(&mut self, refresh_proc: bool) -> Samples {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -188,158 +223,12 @@ impl Samplers {
             vec![]
         };
 
-        let mut raw: Vec<(String, u64, u64, InterfaceOperationalState, String, String)> = self
-            .networks
-            .iter()
-            .map(|(name, data)| {
-                (
-                    name.clone(),
-                    data.total_received(),
-                    data.total_transmitted(),
-                    data.operational_state(),
-                    data.mac_address().to_string(),
-                    data.ip_networks()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                )
-            })
-            .collect();
-        raw.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let mut interfaces = Vec::with_capacity(raw.len());
-        let mut net_rx_rate = 0u64;
-        let mut net_tx_rate = 0u64;
-        for (name, rx_cum, tx_cum, state, mac, ip) in raw {
-            let prev_rx = self.prev_iface_rx.entry(name.clone()).or_insert(rx_cum);
-            let prev_tx = self.prev_iface_tx.entry(name.clone()).or_insert(tx_cum);
-            let rx_rate = rx_cum.saturating_sub(*prev_rx);
-            let tx_rate = tx_cum.saturating_sub(*prev_tx);
-            net_rx_rate = net_rx_rate.saturating_add(rx_rate);
-            net_tx_rate = net_tx_rate.saturating_add(tx_rate);
-            *prev_rx = rx_cum;
-            *prev_tx = tx_cum;
-            interfaces.push(NetInfo {
-                name,
-                rx_bytes: rx_rate,
-                tx_bytes: tx_rate,
-                state: match state {
-                    InterfaceOperationalState::Up => "Up",
-                    InterfaceOperationalState::Down => "Down",
-                    InterfaceOperationalState::LowerLayerDown => "LLDown",
-                    _ => "?",
-                }
-                .to_string(),
-                mac,
-                ip,
-            });
-        }
-
-        let iface_names: HashSet<&str> = interfaces.iter().map(|i| i.name.as_str()).collect();
-        self.prev_iface_rx
-            .retain(|k, _| iface_names.contains(k.as_str()));
-        self.prev_iface_tx
-            .retain(|k, _| iface_names.contains(k.as_str()));
-
-        let mut disks: Vec<DiskInfo> = self
-            .disks
-            .iter()
-            .map(|d| {
-                let total = d.total_space();
-                let available = d.available_space();
-                let used = total.saturating_sub(available);
-                DiskInfo {
-                    device: d.name().to_string_lossy().into_owned(),
-                    mount: d.mount_point().display().to_string(),
-                    fs: d.file_system().to_string_lossy().into_owned(),
-                    total,
-                    available,
-                    usage_pct: if total > 0 {
-                        used as f32 / total as f32 * 100.0
-                    } else {
-                        0.0
-                    },
-                    kind: format!("{}", d.kind()),
-                }
-            })
-            .collect();
-
-        disks.sort_by(|a, b| a.mount.cmp(&b.mount));
-
-        let mut disk_io: Vec<DiskIoInfo> = Vec::new();
-        let mut disk_read_rate = 0u64;
-        let mut disk_write_rate = 0u64;
-        for d in self.disks.list() {
-            let usage = d.usage();
-            let mount_point = d.mount_point().display().to_string();
-            let read_cum = usage.read_bytes;
-            let write_cum = usage.written_bytes;
-
-            let prev_read = self
-                .prev_disk_read
-                .entry(mount_point.clone())
-                .or_insert(read_cum);
-            let prev_write = self
-                .prev_disk_write
-                .entry(mount_point.clone())
-                .or_insert(write_cum);
-            let read_rate = read_cum.saturating_sub(*prev_read);
-            let write_rate = write_cum.saturating_sub(*prev_write);
-            disk_read_rate = disk_read_rate.saturating_add(read_rate);
-            disk_write_rate = disk_write_rate.saturating_add(write_rate);
-            *prev_read = read_cum;
-            *prev_write = write_cum;
-
-            disk_io.push(DiskIoInfo {
-                mount_point,
-                read_rate,
-                write_rate,
-            });
-        }
-
-        let mount_points: HashSet<&str> = disk_io.iter().map(|d| d.mount_point.as_str()).collect();
-        self.prev_disk_read
-            .retain(|k, _| mount_points.contains(k.as_str()));
-        self.prev_disk_write
-            .retain(|k, _| mount_points.contains(k.as_str()));
-
-        let mut temperatures: Vec<TempInfo> = self
-            .components
-            .iter()
-            .map(|c| TempInfo {
-                label: c.label().to_string(),
-                temperature: c.temperature(),
-                max: c.max(),
-                critical: c.critical(),
-            })
-            .collect();
-
-        temperatures.sort_by(|a, b| a.label.cmp(&b.label));
-
-        let sys_info = SysInfo {
-            hostname: self.hostname.clone(),
-            os: self.os.clone(),
-            kernel: self.kernel.clone(),
-            arch: self.arch.clone(),
-            uptime: System::uptime(),
-            cpu_count: self.sys.cpus().len(),
-            boot_time: System::boot_time(),
-            physical_cores: self.physical_cores,
-            distro: System::distribution_id(),
-        };
-
-        let cpus: Vec<CpuInfo> = self
-            .sys
-            .cpus()
-            .iter()
-            .map(|c| CpuInfo {
-                label: c.name().to_string(),
-                usage: c.cpu_usage(),
-                freq: c.frequency(),
-            })
-            .collect();
-
+        let (interfaces, net_rx_rate, net_tx_rate) = self.collect_networks();
+        let disks = self.collect_disk_info();
+        let (disk_io, disk_read_rate, disk_write_rate) = self.collect_disk_io();
+        let temperatures = self.collect_temperatures();
+        let sys_info = self.collect_sys_info();
+        let cpus = self.collect_cpus();
         let load = System::load_average();
 
         Samples {
@@ -365,6 +254,154 @@ impl Samplers {
             temperatures,
             sys_info,
         }
+    }
+
+    fn collect_networks(&mut self) -> (Vec<NetInfo>, u64, u64) {
+        let mut raw: Vec<(String, u64, u64, InterfaceOperationalState, String, String)> = self
+            .networks
+            .iter()
+            .map(|(name, data)| {
+                (
+                    name.clone(),
+                    data.total_received(),
+                    data.total_transmitted(),
+                    data.operational_state(),
+                    data.mac_address().to_string(),
+                    data.ip_networks()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+            })
+            .collect();
+        raw.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut interfaces = Vec::with_capacity(raw.len());
+        let mut net_rx_rate = 0u64;
+        let mut net_tx_rate = 0u64;
+        for (name, rx_cum, tx_cum, state, mac, ip) in raw {
+            let (rx_rate, tx_rate) = self.network_rates.rate_pair(name.clone(), rx_cum, tx_cum);
+            net_rx_rate = net_rx_rate.saturating_add(rx_rate);
+            net_tx_rate = net_tx_rate.saturating_add(tx_rate);
+            interfaces.push(NetInfo {
+                name,
+                rx_bytes: rx_rate,
+                tx_bytes: tx_rate,
+                state: match state {
+                    InterfaceOperationalState::Up => "Up",
+                    InterfaceOperationalState::Down => "Down",
+                    InterfaceOperationalState::LowerLayerDown => "LLDown",
+                    _ => "?",
+                }
+                .to_string(),
+                mac,
+                ip,
+            });
+        }
+
+        let iface_names: HashSet<&str> = interfaces.iter().map(|i| i.name.as_str()).collect();
+        self.network_rates
+            .retain(|k| iface_names.contains(k.as_str()));
+
+        (interfaces, net_rx_rate, net_tx_rate)
+    }
+
+    fn collect_disk_info(&self) -> Vec<DiskInfo> {
+        let mut disks: Vec<DiskInfo> = self
+            .disks
+            .iter()
+            .map(|d| {
+                let total = d.total_space();
+                let available = d.available_space();
+                let used = total.saturating_sub(available);
+                DiskInfo {
+                    device: d.name().to_string_lossy().into_owned(),
+                    mount: d.mount_point().display().to_string(),
+                    fs: d.file_system().to_string_lossy().into_owned(),
+                    total,
+                    available,
+                    usage_pct: if total > 0 {
+                        used as f32 / total as f32 * 100.0
+                    } else {
+                        0.0
+                    },
+                    kind: format!("{}", d.kind()),
+                }
+            })
+            .collect();
+        disks.sort_by(|a, b| a.mount.cmp(&b.mount));
+        disks
+    }
+
+    fn collect_disk_io(&mut self) -> (Vec<DiskIoInfo>, u64, u64) {
+        let mut disk_io: Vec<DiskIoInfo> = Vec::new();
+        let mut disk_read_rate = 0u64;
+        let mut disk_write_rate = 0u64;
+        for d in self.disks.list() {
+            let usage = d.usage();
+            let mount_point = d.mount_point().display().to_string();
+            let (read_rate, write_rate) = self.disk_io_rates.rate_pair(
+                mount_point.clone(),
+                usage.read_bytes,
+                usage.written_bytes,
+            );
+            disk_read_rate = disk_read_rate.saturating_add(read_rate);
+            disk_write_rate = disk_write_rate.saturating_add(write_rate);
+
+            disk_io.push(DiskIoInfo {
+                mount_point,
+                read_rate,
+                write_rate,
+            });
+        }
+
+        let mount_points: HashSet<&str> = disk_io.iter().map(|d| d.mount_point.as_str()).collect();
+        self.disk_io_rates
+            .retain(|k| mount_points.contains(k.as_str()));
+
+        (disk_io, disk_read_rate, disk_write_rate)
+    }
+
+    fn collect_temperatures(&self) -> Vec<TempInfo> {
+        let mut temperatures: Vec<TempInfo> = self
+            .components
+            .iter()
+            .map(|c| TempInfo {
+                label: c.label().to_string(),
+                temperature: c.temperature(),
+                max: c.max(),
+                critical: c.critical(),
+            })
+            .collect();
+        temperatures.sort_by(|a, b| a.label.cmp(&b.label));
+        temperatures
+    }
+
+    fn collect_sys_info(&self) -> SysInfo {
+        SysInfo {
+            hostname: self.hostname.clone(),
+            os: self.os.clone(),
+            kernel: self.kernel.clone(),
+            arch: self.arch.clone(),
+            uptime: System::uptime(),
+            cpu_count: self.sys.cpus().len(),
+            boot_time: System::boot_time(),
+            physical_cores: self.physical_cores,
+            distro: System::distribution_id(),
+        }
+    }
+
+    fn collect_cpus(&self) -> Vec<CpuInfo> {
+        self.sys
+            .cpus()
+            .iter()
+            .map(|c| CpuInfo {
+                label: c.name().to_string(),
+                usage: c.cpu_usage(),
+                freq: c.frequency(),
+            })
+            .collect()
     }
 
     pub fn kill_process(&self, pid: u32, signal: Signal) -> KillResult {
@@ -493,5 +530,17 @@ mod tests {
             KillResult::SelfTarget.message(42),
             "Cannot kill thrum itself"
         );
+    }
+
+    #[test]
+    fn rate_pair_tracker_tracks_rates() {
+        let mut tracker: RatePairTracker<String> = RatePairTracker::new();
+        assert_eq!(tracker.rate_pair("a".to_owned(), 100, 200), (0, 0));
+        assert_eq!(tracker.rate_pair("a".to_owned(), 150, 250), (50, 50));
+        assert_eq!(tracker.rate_pair("b".to_owned(), 300, 400), (0, 0));
+        assert_eq!(tracker.rate_pair("b".to_owned(), 350, 500), (50, 100));
+        tracker.retain(|k| k == "a");
+        assert_eq!(tracker.rate_pair("a".to_owned(), 180, 300), (30, 50));
+        assert_eq!(tracker.rate_pair("b".to_owned(), 350, 500), (0, 0));
     }
 }

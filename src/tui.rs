@@ -145,15 +145,15 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         Span::styled("Net ", Style::new().bold()),
         Span::raw(format!(
             "TX {}  RX {}",
-            format_bytes(samples.net_tx_rate).trim(),
-            format_bytes(samples.net_rx_rate).trim(),
+            format_bytes(samples.net_tx_rate, false).trim(),
+            format_bytes(samples.net_rx_rate, false).trim(),
         )),
         Span::raw("  "),
         Span::styled("Disk ", Style::new().bold()),
         Span::raw(format!(
             "R {}  W {}",
-            format_bytes(samples.disk_read_rate).trim(),
-            format_bytes(samples.disk_write_rate).trim(),
+            format_bytes(samples.disk_read_rate, false).trim(),
+            format_bytes(samples.disk_write_rate, false).trim(),
         )),
     ]))
     .alignment(Alignment::Center)
@@ -161,28 +161,26 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&s, summary);
 }
 
-fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1_000_000_000_000 {
-        format!("{:.1}TB", bytes as f64 / 1_000_000_000_000.0)
-    } else if bytes >= 1_000_000_000 {
-        format!("{:.1}GB", bytes as f64 / 1_000_000_000.0)
-    } else if bytes >= 1_000_000 {
-        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
-    } else if bytes >= 1_000 {
-        format!("{:.1}KB", bytes as f64 / 1_000.0)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
-fn format_disk_size(bytes: u64) -> String {
+fn format_bytes(bytes: u64, binary: bool) -> String {
     let b = bytes as f64;
-    if b >= 1_099_511_627_776.0 {
-        format!("{:.1}TiB", b / 1_099_511_627_776.0)
-    } else if b >= 1_073_741_824.0 {
-        format!("{:.1}GiB", b / 1_073_741_824.0)
-    } else if b >= 1_048_576.0 {
-        format!("{:.0}MiB", b / 1_048_576.0)
+    if binary {
+        if b >= 1_099_511_627_776.0 {
+            format!("{:.1}TiB", b / 1_099_511_627_776.0)
+        } else if b >= 1_073_741_824.0 {
+            format!("{:.1}GiB", b / 1_073_741_824.0)
+        } else if b >= 1_048_576.0 {
+            format!("{:.1}MiB", b / 1_048_576.0)
+        } else {
+            format!("{bytes}B")
+        }
+    } else if b >= 1_000_000_000_000.0 {
+        format!("{:.1}TB", b / 1_000_000_000_000.0)
+    } else if b >= 1_000_000_000.0 {
+        format!("{:.1}GB", b / 1_000_000_000.0)
+    } else if b >= 1_000_000.0 {
+        format!("{:.1}MB", b / 1_000_000.0)
+    } else if b >= 1000.0 {
+        format!("{:.1}KB", b / 1000.0)
     } else {
         format!("{bytes}B")
     }
@@ -577,11 +575,11 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
                 Cell::from(d.mount.as_str()),
                 Cell::from(d.fs.as_str()),
                 Cell::from(Span::styled(
-                    format_disk_size(d.total),
+                    format_bytes(d.total, true),
                     Style::new().fg(Color::Magenta),
                 )),
                 Cell::from(Span::styled(
-                    format_disk_size(d.available),
+                    format_bytes(d.available, true),
                     Style::new().fg(Color::Magenta),
                 )),
                 Cell::from(Span::styled(
@@ -627,11 +625,11 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
             Row::new(vec![
                 Cell::from(d.mount_point.as_str()),
                 Cell::from(Span::styled(
-                    format_bytes(d.read_rate),
+                    format_bytes(d.read_rate, false),
                     Style::new().fg(Color::Cyan),
                 )),
                 Cell::from(Span::styled(
-                    format_bytes(d.write_rate),
+                    format_bytes(d.write_rate, false),
                     Style::new().fg(Color::Yellow),
                 )),
             ])
@@ -730,11 +728,11 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
             Row::new(vec![
                 Cell::from(iface.name.as_str()),
                 Cell::from(Span::styled(
-                    format_bytes(iface.rx_bytes),
+                    format_bytes(iface.rx_bytes, false),
                     Style::new().fg(Color::Yellow),
                 )),
                 Cell::from(Span::styled(
-                    format_bytes(iface.tx_bytes),
+                    format_bytes(iface.tx_bytes, false),
                     Style::new().fg(Color::Yellow),
                 )),
                 Cell::from(iface.state.as_str()),
@@ -841,65 +839,56 @@ struct StatusBar {
 const HINT_SEP: &str = " │ ";
 
 impl StatusBar {
-    fn build(app: &App) -> Self {
+    fn ctx_string(app: &App) -> String {
         if let Some(ref fb) = app.kill_feedback {
-            return Self {
-                ctx: fb.clone(),
-                hints: vec![],
-            };
+            return fb.clone();
         }
         if app.paused {
-            return Self {
-                ctx: "PAUSED (Space to resume)".to_owned(),
-                hints: vec![],
-            };
+            return "PAUSED (Space to resume)".to_owned();
         }
         if app.help_visible {
-            return Self {
-                ctx: "Help (? to close)".to_owned(),
-                hints: vec![],
-            };
+            return "Help (? to close)".to_owned();
         }
         if app.kill_state == Some(KillState::Confirm) {
             let pid = app.selected_pid.unwrap_or(0);
             let name = app.selected_name.as_deref().unwrap_or("?");
+            return format!("Kill? PID {pid} ({name})");
+        }
+        if let Some(ref err) = app.error_msg {
+            return format!("Error: {err}");
+        }
+        let label = app.active_tab.label();
+        let sort = if app.active_tab == Tab::Proc {
+            let arrow = if app.proc_sort_asc { "↑" } else { "↓" };
+            Some(format!(" [{} {}{}]", label, app.proc_sort_field, arrow))
+        } else {
+            None
+        };
+        sort.unwrap_or_else(|| label.to_owned())
+    }
+
+    fn status_hints(app: &App) -> Vec<String> {
+        if app.kill_feedback.is_some() || app.paused || app.help_visible || app.error_msg.is_some()
+        {
+            return vec![];
+        }
+        if app.kill_state == Some(KillState::Confirm) {
             let sig_hints: Vec<String> = app::KILL_SIGNAL_MAP
                 .iter()
                 .take(2)
                 .map(|(k, label, _)| format!("{k} {label}"))
                 .collect();
-            return Self {
-                ctx: format!("Kill? PID {pid} ({name})"),
-                hints: vec![
-                    sig_hints[0].clone(),
-                    sig_hints[1].clone(),
-                    format!(
-                        "{}-{} More",
-                        app::KILL_SIGNAL_MAP[2].0,
-                        app::KILL_SIGNAL_MAP.last().unwrap().0
-                    ),
-                    "any Cancel".to_owned(),
-                ],
-            };
+            return vec![
+                sig_hints[0].clone(),
+                sig_hints[1].clone(),
+                format!(
+                    "{}-{} More",
+                    app::KILL_SIGNAL_MAP[2].0,
+                    app::KILL_SIGNAL_MAP.last().unwrap().0
+                ),
+                "any Cancel".to_owned(),
+            ];
         }
-
-        if let Some(ref err) = app.error_msg {
-            return Self {
-                ctx: format!("Error: {err}"),
-                hints: vec![],
-            };
-        }
-
-        let ctx = {
-            let label = app.active_tab.label();
-            let sort = if app.active_tab == Tab::Proc {
-                let arrow = if app.proc_sort_asc { "↑" } else { "↓" };
-                Some(format!(" [{} {}{}]", label, app.proc_sort_field, arrow))
-            } else {
-                None
-            };
-            sort.unwrap_or_else(|| label.to_owned())
-        };
 
         let mut hints: Vec<String> = Vec::with_capacity(3);
 
@@ -950,7 +939,14 @@ impl StatusBar {
             hints.truncate(MAX_HINTS);
         }
 
-        Self { ctx, hints }
+        hints
+    }
+
+    fn build(app: &App) -> Self {
+        Self {
+            ctx: Self::ctx_string(app),
+            hints: Self::status_hints(app),
+        }
     }
 
     fn display(&self) -> (String, String) {
@@ -1221,13 +1217,13 @@ mod tests {
             (2_000_000_000, "2.0GB"),
             (2_000_000_000_000, "2.0TB"),
         ] {
-            assert_eq!(format_bytes(input), expected);
+            assert_eq!(format_bytes(input, false), expected);
         }
     }
 
     #[test]
     fn format_bytes_large_no_overflow() {
-        let result = format_bytes(18_446_744_073_709_551_615);
+        let result = format_bytes(18_446_744_073_709_551_615, false);
         assert!(
             !result.contains("  "),
             "no extra whitespace padding: {result:?}"
@@ -1236,14 +1232,14 @@ mod tests {
     }
 
     #[test]
-    fn format_disk_size_values() {
+    fn format_bytes_binary_values() {
         for (input, expected) in [
             (500, "500B"),
-            (1_048_576, "1MiB"),
+            (1_048_576, "1.0MiB"),
             (1_073_741_824, "1.0GiB"),
             (2 * 1_099_511_627_776, "2.0TiB"),
         ] {
-            assert_eq!(format_disk_size(input), expected);
+            assert_eq!(format_bytes(input, true), expected);
         }
     }
 
@@ -1267,15 +1263,19 @@ mod tests {
 
     #[test]
     fn tab_color_matches_tab() {
-        assert_eq!(tab_color(Tab::Dash), Color::Green);
-        assert_eq!(tab_color(Tab::Proc), Color::Cyan);
-        assert_eq!(tab_color(Tab::Net), Color::Yellow);
-        assert_eq!(tab_color(Tab::Files), Color::Magenta);
-        assert_eq!(tab_color(Tab::Time), Color::Gray);
-        assert_eq!(tab_color(Tab::Temp), Color::Red);
-        assert_eq!(tab_color(Tab::Cores), Color::Blue);
-        assert_eq!(tab_color(Tab::Disk), Color::White);
-        assert_eq!(tab_color(Tab::Mem), Color::LightBlue);
+        for (tab, expected) in &[
+            (Tab::Dash, Color::Green),
+            (Tab::Proc, Color::Cyan),
+            (Tab::Net, Color::Yellow),
+            (Tab::Files, Color::Magenta),
+            (Tab::Time, Color::Gray),
+            (Tab::Temp, Color::Red),
+            (Tab::Cores, Color::Blue),
+            (Tab::Disk, Color::White),
+            (Tab::Mem, Color::LightBlue),
+        ] {
+            assert_eq!(tab_color(*tab), *expected);
+        }
     }
 
     #[test]
@@ -1525,26 +1525,15 @@ mod tests {
             !hints.contains("/ Search"),
             "no search hint when filter active"
         );
-    }
 
-    #[test]
-    fn status_bar_search_hint_when_no_filter() {
-        let mut app = App::new();
-        app.active_tab = Tab::Proc;
-        let (_, hints) = StatusBar::build(&app).display();
-        assert!(
-            hints.contains("/ Search"),
-            "shows / Search when no filter active"
-        );
-    }
-
-    #[test]
-    fn status_bar_esc_clear_on_net_tab() {
-        let mut app = App::new();
         app.active_tab = Tab::Net;
         app.net_query = "eth".to_owned();
         let (_, hints) = StatusBar::build(&app).display();
         assert!(hints.contains("Esc Clear"), "Esc Clear on Net with filter");
+        assert!(
+            !hints.contains("/ Search"),
+            "no search hint on Net with filter"
+        );
     }
 
     #[test]
