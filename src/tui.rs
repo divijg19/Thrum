@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -125,17 +127,8 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .label(swap_label);
     frame.render_widget(&swap_g, swap_area);
 
-    let s = Sparkline::default()
-        .block(Block::bordered().title(" CPU "))
-        .data(app.cpu_history.iter())
-        .style(Style::new().fg(Color::Green));
-    frame.render_widget(&s, cpu_spark);
-
-    let ms = Sparkline::default()
-        .block(Block::bordered().title(" Memory "))
-        .data(app.mem_history.iter())
-        .style(Style::new().fg(Color::Cyan));
-    frame.render_widget(&ms, mem_spark);
+    render_sparkline(frame, cpu_spark, " CPU ", &app.cpu_history, Color::Green);
+    render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
 
     let l = Paragraph::new(Line::from(vec![
         Span::styled("Load Average  ", Style::new().bold()),
@@ -439,17 +432,20 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let p = Paragraph::new(lines).fg(Color::Gray);
     frame.render_widget(&p, info);
 
-    let ms = Sparkline::default()
-        .block(Block::bordered().title(" History "))
-        .data(&app.mem_history)
-        .style(Style::new().fg(Color::LightBlue));
-    frame.render_widget(&ms, mem_spark);
-
-    let ss = Sparkline::default()
-        .block(Block::bordered().title(" Swap "))
-        .data(&app.swap_history)
-        .style(Style::new().fg(Color::Yellow));
-    frame.render_widget(&ss, swap_spark);
+    render_sparkline(
+        frame,
+        mem_spark,
+        " History ",
+        &app.mem_history,
+        Color::LightBlue,
+    );
+    render_sparkline(
+        frame,
+        swap_spark,
+        " Swap ",
+        &app.swap_history,
+        Color::Yellow,
+    );
 }
 
 fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -484,11 +480,13 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .block(Block::bordered().title(" Temperature "));
     frame.render_widget(table, table_area);
 
-    let ts = Sparkline::default()
-        .block(Block::bordered().title(" History "))
-        .data(&app.temp_history)
-        .style(Style::new().fg(Color::Red));
-    frame.render_widget(&ts, spark_area);
+    render_sparkline(
+        frame,
+        spark_area,
+        " History ",
+        &app.temp_history,
+        Color::Red,
+    );
 }
 
 fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -605,11 +603,13 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
         );
     frame.render_widget(table, table_area);
 
-    let fus = Sparkline::default()
-        .block(Block::bordered().title(" Usage "))
-        .data(&app.disk_usage_history)
-        .style(Style::new().fg(Color::Magenta));
-    frame.render_widget(&fus, spark_area);
+    render_sparkline(
+        frame,
+        spark_area,
+        " Usage ",
+        &app.disk_usage_history,
+        Color::Magenta,
+    );
 }
 
 fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
@@ -649,17 +649,20 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .block(Block::bordered().title(" Disk I/O "));
     frame.render_widget(table, table_area);
 
-    let rs = Sparkline::default()
-        .block(Block::bordered().title(" Read "))
-        .data(app.disk_read_history.iter())
-        .style(Style::new().fg(Color::Cyan));
-    frame.render_widget(&rs, read_spark);
-
-    let ws = Sparkline::default()
-        .block(Block::bordered().title(" Write "))
-        .data(app.disk_write_history.iter())
-        .style(Style::new().fg(Color::Yellow));
-    frame.render_widget(&ws, write_spark);
+    render_sparkline(
+        frame,
+        read_spark,
+        " Read ",
+        &app.disk_read_history,
+        Color::Cyan,
+    );
+    render_sparkline(
+        frame,
+        write_spark,
+        " Write ",
+        &app.disk_write_history,
+        Color::Yellow,
+    );
 }
 
 fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
@@ -757,17 +760,8 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
         )));
     frame.render_widget(table, table_area);
 
-    let rs = Sparkline::default()
-        .block(Block::bordered().title(" RX "))
-        .data(app.net_rx_history.iter())
-        .style(Style::new().fg(Color::Green));
-    frame.render_widget(&rs, rx_spark);
-
-    let ts = Sparkline::default()
-        .block(Block::bordered().title(" TX "))
-        .data(app.net_tx_history.iter())
-        .style(Style::new().fg(Color::Yellow));
-    frame.render_widget(&ts, tx_spark);
+    render_sparkline(frame, rx_spark, " RX ", &app.net_rx_history, Color::Green);
+    render_sparkline(frame, tx_spark, " TX ", &app.net_tx_history, Color::Yellow);
 }
 
 fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'static str {
@@ -775,6 +769,20 @@ fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'s
         return "";
     }
     if asc { "\u{2191}" } else { "\u{2193}" }
+}
+
+fn render_sparkline(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    data: &VecDeque<u64>,
+    color: Color,
+) {
+    let s = Sparkline::default()
+        .block(Block::bordered().title(title))
+        .data(data.iter())
+        .style(Style::new().fg(color));
+    frame.render_widget(&s, area);
 }
 
 fn render_overlay(frame: &mut Frame, area: Rect, lines: Vec<Line>, title: &str, min_width: u16) {
@@ -855,12 +863,21 @@ impl StatusBar {
         if app.kill_state == Some(KillState::Confirm) {
             let pid = app.selected_pid.unwrap_or(0);
             let name = app.selected_name.as_deref().unwrap_or("?");
+            let sig_hints: Vec<String> = app::KILL_SIGNAL_MAP
+                .iter()
+                .take(2)
+                .map(|(k, label, _)| format!("{k} {label}"))
+                .collect();
             return Self {
                 ctx: format!("Kill? PID {pid} ({name})"),
                 hints: vec![
-                    "1 SIGTERM".to_owned(),
-                    "2 SIGKILL".to_owned(),
-                    "3-6 More".to_owned(),
+                    sig_hints[0].clone(),
+                    sig_hints[1].clone(),
+                    format!(
+                        "{}-{} More",
+                        app::KILL_SIGNAL_MAP[2].0,
+                        app::KILL_SIGNAL_MAP.last().unwrap().0
+                    ),
                     "any Cancel".to_owned(),
                 ],
             };
@@ -1168,16 +1185,24 @@ fn render_kill_feedback(frame: &mut Frame, area: Rect, feedback: &str) {
 }
 
 fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
-    let lines = vec![
+    let signal_lines: Vec<Line> = app::KILL_SIGNAL_MAP
+        .chunks(2)
+        .map(|chunk| {
+            let parts: Vec<String> = chunk
+                .iter()
+                .map(|(k, label, _)| format!("  {k}  {label}"))
+                .collect();
+            Line::from(parts.join("    "))
+        })
+        .collect();
+    let mut lines = vec![
         Line::from(""),
         Line::from(format!("  Kill PID {pid} ({name})?")),
         Line::from(""),
-        Line::from("  1  SIGTERM    2  SIGKILL"),
-        Line::from("  3  SIGINT      4  SIGHUP"),
-        Line::from("  5  SIGSTOP    6  SIGCONT"),
-        Line::from("  any  Cancel"),
-        Line::from(""),
     ];
+    lines.extend(signal_lines);
+    lines.push(Line::from("  any  Cancel"));
+    lines.push(Line::from(""));
 
     render_overlay(frame, area, lines, "Kill Process", 42);
 }

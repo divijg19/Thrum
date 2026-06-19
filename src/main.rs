@@ -59,10 +59,7 @@ fn main() -> std::io::Result<()> {
     let mut app = app::App::new();
     app.error_msg = cfg.config_warning.take();
     app.apply_config(&cfg);
-    if let Ok((w, h)) = crossterm::terminal::size() {
-        app.term_width = w;
-        app.term_height = h;
-    }
+    let _ = app.refresh_term_size();
     let mut samplers = samplers::Samplers::new();
     let refresh = Duration::from_millis(cfg.refresh_ms);
 
@@ -77,68 +74,7 @@ fn main() -> std::io::Result<()> {
             match result {
                 Ok(()) => {
                     app.error_msg = None;
-
-                    app::push_bounded(
-                        &mut app.cpu_history,
-                        last_samples.cpu_usage as u64,
-                        app.history_window,
-                    );
-
-                    let mem_pct = app::pct(last_samples.mem_used, last_samples.mem_total) as u64;
-                    app::push_bounded(&mut app.mem_history, mem_pct, app.history_window);
-
-                    app::push_bounded(
-                        &mut app.net_rx_history,
-                        last_samples.net_rx_rate,
-                        app.history_window,
-                    );
-                    app::push_bounded(
-                        &mut app.net_tx_history,
-                        last_samples.net_tx_rate,
-                        app.history_window,
-                    );
-
-                    app::push_bounded(
-                        &mut app.disk_read_history,
-                        last_samples.disk_read_rate,
-                        app.history_window,
-                    );
-                    app::push_bounded(
-                        &mut app.disk_write_history,
-                        last_samples.disk_write_rate,
-                        app.history_window,
-                    );
-
-                    let valid_temps: Vec<f32> = last_samples
-                        .temperatures
-                        .iter()
-                        .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
-                        .collect();
-                    let avg_temp = if valid_temps.is_empty() {
-                        0.0
-                    } else {
-                        valid_temps.iter().sum::<f32>() / valid_temps.len() as f32
-                    };
-                    app::push_bounded(
-                        &mut app.temp_history,
-                        (avg_temp * 10.0) as u64,
-                        app.history_window,
-                    );
-
-                    let avg_usage = if last_samples.disks.is_empty() {
-                        0.0
-                    } else {
-                        last_samples.disks.iter().map(|d| d.usage_pct).sum::<f32>()
-                            / last_samples.disks.len() as f32
-                    };
-                    app::push_bounded(
-                        &mut app.disk_usage_history,
-                        (avg_usage * 10.0) as u64,
-                        app.history_window,
-                    );
-
-                    let swap_pct = app::pct(last_samples.swap_used, last_samples.swap_total) as u64;
-                    app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
+                    app.push_history(&last_samples);
                 }
                 Err(e) => {
                     samplers = samplers::Samplers::new();
@@ -157,10 +93,7 @@ fn main() -> std::io::Result<()> {
         terminal.draw(|f| tui::draw(f, &mut app, &last_samples))?;
 
         if event::poll(refresh)? {
-            if let Ok((w, h)) = crossterm::terminal::size() {
-                app.term_width = w;
-                app.term_height = h;
-            }
+            let _ = app.refresh_term_size();
             match event::read()? {
                 Event::Key(key) => {
                     app.handle_key(key);
