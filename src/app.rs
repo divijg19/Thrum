@@ -212,7 +212,7 @@ impl App {
         self.proc_sort_field = cfg.proc_sort_default;
         self.proc_sort_asc = cfg.proc_sort_asc_default;
         self.history_window = cfg.history_window.clamp(1, 3600);
-        self.scroll_step = cfg.scroll_step.min(100);
+        self.scroll_step = cfg.scroll_step.clamp(1, 100);
     }
 
     const SORT_MAP: &[(char, ProcSortField, bool)] = &[
@@ -335,49 +335,21 @@ impl App {
                     }
                 }
             }
-            KeyCode::Up if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_sub(1);
-                self.selected_pid = None;
-                self.selected_name = None;
-            }
-            KeyCode::Down if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_add(1);
-                self.selected_pid = None;
-                self.selected_name = None;
-            }
-            KeyCode::PageUp if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_sub(PAGE_SIZE);
-                self.selected_pid = None;
-                self.selected_name = None;
-            }
-            KeyCode::PageDown if self.active_tab == Tab::Proc => {
-                self.proc_selection = self.proc_selection.saturating_add(PAGE_SIZE);
-                self.selected_pid = None;
-                self.selected_name = None;
-            }
-            KeyCode::Up if self.active_tab == Tab::Net => {
-                self.net_selection = self.net_selection.saturating_sub(1);
-            }
-            KeyCode::Down if self.active_tab == Tab::Net => {
-                self.net_selection = self.net_selection.saturating_add(1);
-            }
-            KeyCode::PageUp if self.active_tab == Tab::Net => {
-                self.net_selection = self.net_selection.saturating_sub(PAGE_SIZE);
-            }
-            KeyCode::PageDown if self.active_tab == Tab::Net => {
-                self.net_selection = self.net_selection.saturating_add(PAGE_SIZE);
-            }
-            KeyCode::Up if self.active_tab == Tab::Files => {
-                self.files_selection = self.files_selection.saturating_sub(1);
-            }
-            KeyCode::Down if self.active_tab == Tab::Files => {
-                self.files_selection = self.files_selection.saturating_add(1);
-            }
-            KeyCode::PageUp if self.active_tab == Tab::Files => {
-                self.files_selection = self.files_selection.saturating_sub(PAGE_SIZE);
-            }
-            KeyCode::PageDown if self.active_tab == Tab::Files => {
-                self.files_selection = self.files_selection.saturating_add(PAGE_SIZE);
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+                match self.active_tab {
+                    Tab::Proc => {
+                        Self::move_selection(key.code, &mut self.proc_selection);
+                        self.selected_pid = None;
+                        self.selected_name = None;
+                    }
+                    Tab::Net => {
+                        Self::move_selection(key.code, &mut self.net_selection);
+                    }
+                    Tab::Files => {
+                        Self::move_selection(key.code, &mut self.files_selection);
+                    }
+                    _ => {}
+                }
             }
             KeyCode::Right
                 if matches!(
@@ -409,52 +381,50 @@ impl App {
         }
     }
 
+    fn apply_scroll(&mut self, up: bool) {
+        match self.active_tab {
+            Tab::Proc => {
+                if up {
+                    self.proc_selection = self.proc_selection.saturating_sub(self.scroll_step);
+                } else {
+                    self.proc_selection = self.proc_selection.saturating_add(self.scroll_step);
+                }
+                self.selected_pid = None;
+                self.selected_name = None;
+                self.kill_state = None;
+            }
+            Tab::Net => {
+                if up {
+                    self.net_selection = self.net_selection.saturating_sub(self.scroll_step);
+                } else {
+                    self.net_selection = self.net_selection.saturating_add(self.scroll_step);
+                }
+            }
+            Tab::Files => {
+                if up {
+                    self.files_selection = self.files_selection.saturating_sub(self.scroll_step);
+                } else {
+                    self.files_selection = self.files_selection.saturating_add(self.scroll_step);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn handle_mouse(&mut self, col: u16, row: u16, kind: MouseEventKind) {
         match kind {
             MouseEventKind::Down(MouseButton::Left) => self.handle_click(col, row),
             MouseEventKind::ScrollUp => {
                 if self.is_on_tab_bar(col, row) {
-                    self.cycle_tab(false);
-                    return;
+                    return self.cycle_tab(false);
                 }
-                match self.active_tab {
-                    Tab::Proc => {
-                        self.proc_selection = self.proc_selection.saturating_sub(self.scroll_step);
-                        self.selected_pid = None;
-                        self.selected_name = None;
-                        self.kill_state = None;
-                    }
-                    Tab::Net => {
-                        self.net_selection = self.net_selection.saturating_sub(self.scroll_step);
-                    }
-                    Tab::Files => {
-                        self.files_selection =
-                            self.files_selection.saturating_sub(self.scroll_step);
-                    }
-                    _ => {}
-                }
+                self.apply_scroll(true);
             }
             MouseEventKind::ScrollDown => {
                 if self.is_on_tab_bar(col, row) {
-                    self.cycle_tab(true);
-                    return;
+                    return self.cycle_tab(true);
                 }
-                match self.active_tab {
-                    Tab::Proc => {
-                        self.proc_selection = self.proc_selection.saturating_add(self.scroll_step);
-                        self.selected_pid = None;
-                        self.selected_name = None;
-                        self.kill_state = None;
-                    }
-                    Tab::Net => {
-                        self.net_selection = self.net_selection.saturating_add(self.scroll_step);
-                    }
-                    Tab::Files => {
-                        self.files_selection =
-                            self.files_selection.saturating_add(self.scroll_step);
-                    }
-                    _ => {}
-                }
+                self.apply_scroll(false);
             }
             _ => {}
         }
@@ -497,64 +467,50 @@ impl App {
             }
         }
 
-        if self.active_tab == Tab::Proc {
+        if matches!(self.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
             let tab_y: u16 = match self.tab_orientation {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
                 _ => 1,
             };
-            let search_h: u16 = if !self.proc_query.is_empty() || self.proc_search_focused {
+            let (search_focused, query, selection, scroll, clear_pid) = match self.active_tab {
+                Tab::Proc => (
+                    &mut self.proc_search_focused,
+                    &self.proc_query,
+                    &mut self.proc_selection,
+                    self.proc_scroll,
+                    true,
+                ),
+                Tab::Net => (
+                    &mut self.net_search_focused,
+                    &self.net_query,
+                    &mut self.net_selection,
+                    self.net_scroll,
+                    false,
+                ),
+                Tab::Files => (
+                    &mut self.files_search_focused,
+                    &self.files_query,
+                    &mut self.files_selection,
+                    self.files_scroll,
+                    false,
+                ),
+                _ => unreachable!(),
+            };
+            let search_h: u16 = if !query.is_empty() || *search_focused {
                 3
             } else {
                 0
             };
             let data_start = tab_y + search_h + 2;
             if row >= data_start {
-                self.proc_search_focused = false;
+                *search_focused = false;
                 let offset = (row - data_start) as usize;
-                self.proc_selection = self
-                    .proc_scroll
-                    .saturating_add(offset.min(MAX_CLICK_OFFSET));
-                self.selected_pid = None;
-                self.selected_name = None;
-                self.kill_state = None;
-            }
-        }
-
-        if self.active_tab == Tab::Net {
-            let tab_y: u16 = match self.tab_orientation {
-                TabOrientation::Horizontal if self.tab_bar_visible => 2,
-                _ => 1,
-            };
-            let search_h: u16 = if !self.net_query.is_empty() || self.net_search_focused {
-                3
-            } else {
-                0
-            };
-            let data_start = tab_y + search_h + 2;
-            if row >= data_start {
-                self.net_search_focused = false;
-                let offset = (row - data_start) as usize;
-                self.net_selection = self.net_scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
-            }
-        }
-
-        if self.active_tab == Tab::Files {
-            let tab_y: u16 = match self.tab_orientation {
-                TabOrientation::Horizontal if self.tab_bar_visible => 2,
-                _ => 1,
-            };
-            let search_h: u16 = if !self.files_query.is_empty() || self.files_search_focused {
-                3
-            } else {
-                0
-            };
-            let data_start = tab_y + search_h + 2;
-            if row >= data_start {
-                self.files_search_focused = false;
-                let offset = (row - data_start) as usize;
-                self.files_selection = self
-                    .files_scroll
-                    .saturating_add(offset.min(MAX_CLICK_OFFSET));
+                *selection = scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
+                if clear_pid {
+                    self.selected_pid = None;
+                    self.selected_name = None;
+                    self.kill_state = None;
+                }
             }
         }
     }
@@ -570,6 +526,17 @@ impl App {
             }
             _ => false,
         }
+    }
+
+    fn move_selection(code: KeyCode, selection: &mut usize) -> bool {
+        match code {
+            KeyCode::Up => *selection = selection.saturating_sub(1),
+            KeyCode::Down => *selection = selection.saturating_add(1),
+            KeyCode::PageUp => *selection = selection.saturating_sub(PAGE_SIZE),
+            KeyCode::PageDown => *selection = selection.saturating_add(PAGE_SIZE),
+            _ => return false,
+        }
+        true
     }
 
     fn cycle_tab(&mut self, forward: bool) {
@@ -764,6 +731,14 @@ pub fn parse_args(args: &[String]) -> CliAction {
         cfg.refresh_ms = 1000;
     }
     CliAction::Config(cfg)
+}
+
+pub fn pct(part: u64, total: u64) -> f64 {
+    if total > 0 {
+        part as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    }
 }
 
 pub fn push_bounded<T>(deque: &mut VecDeque<T>, value: T, max: usize) {
@@ -2268,6 +2243,14 @@ mod tests {
         app.apply_config(&cfg);
         assert_eq!(app.scroll_step, 100, "scroll_step capped at 100");
 
+        // Floor at 1
+        let cfg = Config {
+            scroll_step: 0,
+            ..Config::default()
+        };
+        app.apply_config(&cfg);
+        assert_eq!(app.scroll_step, 1, "scroll_step floored at 1");
+
         // Verify configured step affects mouse scroll
         let cfg = Config {
             scroll_step: 5,
@@ -2280,5 +2263,22 @@ mod tests {
         assert_eq!(app.net_selection, 15, "scroll uses configured step of 5");
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
         assert_eq!(app.net_selection, 20, "scroll down uses configured step");
+    }
+
+    #[test]
+    fn pct_values() {
+        for (part, total, expected) in [
+            (50, 100, 50.0),
+            (0, 100, 0.0),
+            (100, 100, 100.0),
+            (0, 0, 0.0),
+            (1, 3, 100.0 / 3.0),
+        ] {
+            let result = pct(part, total);
+            assert!(
+                (result - expected).abs() < 1e-12,
+                "pct({part}, {total}) = {result}, expected {expected}"
+            );
+        }
     }
 }
