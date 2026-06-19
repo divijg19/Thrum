@@ -515,13 +515,13 @@ fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
     }
 }
 
-fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let has_query = !app.files_query.is_empty();
 
-    let inner_area = render_search_bar(frame, area, &app.files_query, app.files_search_focused);
+    let content_area = render_search_bar(frame, area, &app.files_query, app.files_search_focused);
 
     let [table_area, spark_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(inner_area);
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(content_area);
 
     let filtered: Vec<&DiskInfo> = if has_query {
         let q = app.files_query.to_lowercase();
@@ -534,6 +534,23 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         samples.disks.iter().collect()
     };
 
+    let count = filtered.len();
+    app.files_selection = app.files_selection.min(count.saturating_sub(1));
+
+    let vis = (table_area.height as usize).saturating_sub(4);
+    if app.files_selection < app.files_scroll {
+        app.files_scroll = app.files_selection;
+    } else if vis > 0 && app.files_selection >= app.files_scroll + vis {
+        app.files_scroll = app.files_selection.saturating_add(1).saturating_sub(vis);
+    }
+
+    let clamped_scroll = app.files_scroll.min(count.saturating_sub(1));
+    let max_visible = (table_area.height as usize).saturating_sub(3);
+    let start = clamped_scroll;
+    let end = count.min(start + max_visible);
+    let visible = &filtered[start..end];
+    let rel_sel = app.files_selection.saturating_sub(start);
+
     let widths: [Constraint; 7] = [
         Constraint::Length(14),
         Constraint::Fill(1),
@@ -544,9 +561,16 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         Constraint::Length(7),
     ];
 
-    let rows: Vec<Row> = filtered
+    let rows: Vec<Row> = visible
         .iter()
-        .map(|d| {
+        .enumerate()
+        .map(|(i, d)| {
+            let is_selected = i == rel_sel;
+            let style = if is_selected {
+                Style::new().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
             Row::new(vec![
                 Cell::from(d.device.as_str()),
                 Cell::from(d.mount.as_str()),
@@ -565,6 +589,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
                 )),
                 Cell::from(d.kind.as_str()),
             ])
+            .style(style)
         })
         .collect();
 
@@ -572,7 +597,9 @@ fn render_files(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .header(Row::new(vec![
             "Device", "Mount", "FS", "Size", "Avail", "Use%", "Kind",
         ]))
-        .block(Block::bordered().title(" Filesystems "));
+        .block(
+            Block::bordered().title(format!(" Filesystems ({count}/{}) ", samples.disks.len(),)),
+        );
     frame.render_widget(table, table_area);
 
     let fus = Sparkline::default()
@@ -632,17 +659,17 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&ws, write_spark);
 }
 
-fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let has_query = !app.net_query.is_empty();
 
-    let table_area = render_search_bar(frame, area, &app.net_query, app.net_search_focused);
+    let content_area = render_search_bar(frame, area, &app.net_query, app.net_search_focused);
 
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
         Constraint::Length(3),
     ])
-    .areas(table_area);
+    .areas(content_area);
 
     let filtered: Vec<&NetInfo> = if has_query {
         let q = app.net_query.to_lowercase();
@@ -655,9 +682,42 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         samples.interfaces.iter().collect()
     };
 
-    let rows: Vec<Row> = filtered
+    let count = filtered.len();
+    app.net_selection = app.net_selection.min(count.saturating_sub(1));
+
+    let vis = (table_area.height as usize).saturating_sub(4);
+    if app.net_selection < app.net_scroll {
+        app.net_scroll = app.net_selection;
+    } else if vis > 0 && app.net_selection >= app.net_scroll + vis {
+        app.net_scroll = app.net_selection.saturating_add(1).saturating_sub(vis);
+    }
+
+    let clamped_scroll = app.net_scroll.min(count.saturating_sub(1));
+    let max_visible = (table_area.height as usize).saturating_sub(3);
+    let start = clamped_scroll;
+    let end = count.min(start + max_visible);
+    let visible = &filtered[start..end];
+    let rel_sel = app.net_selection.saturating_sub(start);
+
+    let widths: [Constraint; 6] = [
+        Constraint::Fill(1),
+        Constraint::Length(12),
+        Constraint::Length(12),
+        Constraint::Length(8),
+        Constraint::Length(17),
+        Constraint::Fill(1),
+    ];
+
+    let rows: Vec<Row> = visible
         .iter()
-        .map(|iface| {
+        .enumerate()
+        .map(|(i, iface)| {
+            let is_selected = i == rel_sel;
+            let style = if is_selected {
+                Style::new().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
             Row::new(vec![
                 Cell::from(iface.name.as_str()),
                 Cell::from(Span::styled(
@@ -672,17 +732,9 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
                 Cell::from(iface.mac.as_str()),
                 Cell::from(iface.ip.as_str()),
             ])
+            .style(style)
         })
         .collect();
-
-    let widths: [Constraint; 6] = [
-        Constraint::Fill(1),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Length(17),
-        Constraint::Fill(1),
-    ];
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec![
@@ -693,7 +745,10 @@ fn render_net(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
             "MAC",
             "IP",
         ]))
-        .block(Block::bordered().title(" Network I/O "));
+        .block(Block::bordered().title(format!(
+            " Network I/O ({count}/{}) ",
+            samples.interfaces.len(),
+        )));
     frame.render_widget(table, table_area);
 
     let rs = Sparkline::default()
