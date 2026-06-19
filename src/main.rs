@@ -84,12 +84,7 @@ fn main() -> std::io::Result<()> {
                         app.history_window,
                     );
 
-                    let mem_pct = if last_samples.mem_total > 0 {
-                        (last_samples.mem_used as f64 / last_samples.mem_total as f64 * 100.0)
-                            as u64
-                    } else {
-                        0
-                    };
+                    let mem_pct = app::pct(last_samples.mem_used, last_samples.mem_total) as u64;
                     app::push_bounded(&mut app.mem_history, mem_pct, app.history_window);
 
                     app::push_bounded(
@@ -142,12 +137,7 @@ fn main() -> std::io::Result<()> {
                         app.history_window,
                     );
 
-                    let swap_pct = if last_samples.swap_total > 0 {
-                        (last_samples.swap_used as f64 / last_samples.swap_total as f64 * 100.0)
-                            as u64
-                    } else {
-                        0
-                    };
+                    let swap_pct = app::pct(last_samples.swap_used, last_samples.swap_total) as u64;
                     app::push_bounded(&mut app.swap_history, swap_pct, app.history_window);
                 }
                 Err(e) => {

@@ -4,17 +4,10 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
-use crate::app::{App, KillState, MAX_QUERY_LEN, ProcSortField, Tab, TabOrientation};
+use crate::app::{self, App, KillState, MAX_QUERY_LEN, ProcSortField, Tab, TabOrientation};
+use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const MAX_HINTS: usize = 4;
-
-fn pct(part: u64, total: u64) -> f64 {
-    if total > 0 {
-        part as f64 / total as f64 * 100.0
-    } else {
-        0.0
-    }
-}
 
 fn format_memory(gib: f64, pct: f64) -> String {
     format!("{gib:.1} GiB  {pct:.1}%")
@@ -33,7 +26,6 @@ fn clamp_scroll(selection: usize, scroll: &mut usize, count: usize, height: u16)
     let end = count.min(start + max_visible);
     (start, end)
 }
-use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const fn tab_color(tab: Tab) -> Color {
     match tab {
@@ -104,7 +96,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .label(format!("CPU: {:.1}%", samples.cpu_usage.min(100.0)));
     frame.render_widget(&g, cpu_area);
 
-    let mem_pct_f = pct(samples.mem_used, samples.mem_total.max(1)).min(100.0);
+    let mem_pct_f = app::pct(samples.mem_used, samples.mem_total.max(1)).min(100.0);
     let mem_pct = mem_pct_f as u16;
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
@@ -117,12 +109,12 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     frame.render_widget(&mem_g, mem_area);
 
     let (swap_pct, swap_label) = if samples.swap_total > 0 {
-        let pct = pct(samples.swap_used, samples.swap_total).min(100.0);
+        let swap_pct_val = app::pct(samples.swap_used, samples.swap_total).min(100.0);
         let used_gb = samples.swap_used as f64 / 1_073_741_824.0;
         let total_gb = samples.swap_total as f64 / 1_073_741_824.0;
         (
-            pct as u16,
-            format!("Swap: {pct:.1}%  {used_gb:.1}/{total_gb:.1} GiB"),
+            swap_pct_val as u16,
+            format!("Swap: {swap_pct_val:.1}%  {used_gb:.1}/{total_gb:.1} GiB"),
         )
     } else {
         (0, "Swap: N/A".to_string())
@@ -391,17 +383,17 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let mem_avail_gb = samples.mem_available as f64 / 1_073_741_824.0;
     let mem_free_gb = samples.mem_free as f64 / 1_073_741_824.0;
 
-    let mem_used_pct = pct(samples.mem_used, samples.mem_total);
-    let mem_avail_pct = pct(samples.mem_available, samples.mem_total);
-    let mem_free_pct = pct(samples.mem_free, samples.mem_total);
+    let mem_used_pct = app::pct(samples.mem_used, samples.mem_total);
+    let mem_avail_pct = app::pct(samples.mem_available, samples.mem_total);
+    let mem_free_pct = app::pct(samples.mem_free, samples.mem_total);
 
     let swap_total_gb = samples.swap_total as f64 / 1_073_741_824.0;
     let swap_used_gb = samples.swap_used as f64 / 1_073_741_824.0;
     let swap_free = samples.swap_total.saturating_sub(samples.swap_used);
     let swap_free_gb = swap_free as f64 / 1_073_741_824.0;
 
-    let swap_used_pct = pct(samples.swap_used, samples.swap_total);
-    let swap_free_pct = pct(swap_free, samples.swap_total);
+    let swap_used_pct = app::pct(samples.swap_used, samples.swap_total);
+    let swap_free_pct = app::pct(swap_free, samples.swap_total);
 
     let lines = vec![
         Line::from(vec![
@@ -785,6 +777,28 @@ fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'s
     if asc { "\u{2191}" } else { "\u{2193}" }
 }
 
+fn render_overlay(frame: &mut Frame, area: Rect, lines: Vec<Line>, title: &str, min_width: u16) {
+    let height = lines.len() as u16 + 2;
+    let [_, inner, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
+    let [_, centered, _] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Min(min_width),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+
+    let p = Paragraph::new(lines)
+        .block(Block::bordered().title(format!(" {title} ")))
+        .fg(Color::Gray);
+    frame.render_widget(&p, centered);
+}
+
 fn render_help(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(""),
@@ -808,25 +822,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Line::from("  Press ? to close"),
     ];
 
-    let height = lines.len() as u16 + 2;
-    let [_, inner, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(height),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-
-    let [_, centered, _] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Min(48),
-        Constraint::Fill(1),
-    ])
-    .areas(inner);
-
-    let p = Paragraph::new(lines)
-        .block(Block::bordered().title(" Help "))
-        .fg(Color::Gray);
-    frame.render_widget(&p, centered);
+    render_overlay(frame, area, lines, "Help", 48);
 }
 
 struct StatusBar {
@@ -1168,25 +1164,7 @@ fn render_kill_feedback(frame: &mut Frame, area: Rect, feedback: &str) {
         Line::from(""),
     ];
 
-    let height = lines.len() as u16 + 2;
-    let [_, inner, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(height),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-
-    let [_, centered, _] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Min(30),
-        Constraint::Fill(1),
-    ])
-    .areas(inner);
-
-    let p = Paragraph::new(lines)
-        .block(Block::bordered().title(" Kill Result "))
-        .fg(Color::Gray);
-    frame.render_widget(&p, centered);
+    render_overlay(frame, area, lines, "Kill Result", 30);
 }
 
 fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
@@ -1201,25 +1179,7 @@ fn render_kill_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str) {
         Line::from(""),
     ];
 
-    let height = lines.len() as u16 + 2;
-    let [_, inner, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(height),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-
-    let [_, centered, _] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Min(42),
-        Constraint::Fill(1),
-    ])
-    .areas(inner);
-
-    let p = Paragraph::new(lines)
-        .block(Block::bordered().title(" Kill Process "))
-        .fg(Color::Gray);
-    frame.render_widget(&p, centered);
+    render_overlay(frame, area, lines, "Kill Process", 42);
 }
 
 #[cfg(test)]
@@ -1227,33 +1187,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_bytes_zero() {
-        assert_eq!(format_bytes(0), "0B");
-    }
-
-    #[test]
-    fn format_bytes_bytes() {
-        assert_eq!(format_bytes(500), "500B");
-    }
-
-    #[test]
-    fn format_bytes_kilobytes() {
-        assert_eq!(format_bytes(1500), "1.5KB");
-    }
-
-    #[test]
-    fn format_bytes_megabytes() {
-        assert_eq!(format_bytes(2_000_000), "2.0MB");
-    }
-
-    #[test]
-    fn format_bytes_gigabytes() {
-        assert_eq!(format_bytes(2_000_000_000), "2.0GB");
-    }
-
-    #[test]
-    fn format_bytes_terabytes() {
-        assert_eq!(format_bytes(2_000_000_000_000), "2.0TB");
+    fn format_bytes_values() {
+        for (input, expected) in [
+            (0, "0B"),
+            (500, "500B"),
+            (1500, "1.5KB"),
+            (2_000_000, "2.0MB"),
+            (2_000_000_000, "2.0GB"),
+            (2_000_000_000_000, "2.0TB"),
+        ] {
+            assert_eq!(format_bytes(input), expected);
+        }
     }
 
     #[test]
@@ -1267,50 +1211,33 @@ mod tests {
     }
 
     #[test]
-    fn format_disk_size_bytes() {
-        assert_eq!(format_disk_size(500), "500B");
+    fn format_disk_size_values() {
+        for (input, expected) in [
+            (500, "500B"),
+            (1_048_576, "1MiB"),
+            (1_073_741_824, "1.0GiB"),
+            (2 * 1_099_511_627_776, "2.0TiB"),
+        ] {
+            assert_eq!(format_disk_size(input), expected);
+        }
     }
 
     #[test]
-    fn format_disk_size_megabytes() {
-        assert_eq!(format_disk_size(1_048_576), "1MiB");
-    }
-
-    #[test]
-    fn format_disk_size_gigabytes() {
-        assert_eq!(format_disk_size(1_073_741_824), "1.0GiB");
-    }
-
-    #[test]
-    fn format_disk_size_terabytes() {
-        let two_tb = 2 * 1_099_511_627_776;
-        assert_eq!(format_disk_size(two_tb), "2.0TiB");
-    }
-
-    #[test]
-    fn format_uptime_seconds() {
-        assert_eq!(format_uptime(0), "0s");
-        assert_eq!(format_uptime(30), "30s");
-        assert_eq!(format_uptime(59), "59s");
-    }
-
-    #[test]
-    fn format_uptime_minutes() {
-        assert_eq!(format_uptime(119), "1m 59s");
-        assert_eq!(format_uptime(120), "2m");
-        assert_eq!(format_uptime(150), "2m 30s");
-    }
-
-    #[test]
-    fn format_uptime_hours() {
-        assert_eq!(format_uptime(3600), "1h 0m");
-        assert_eq!(format_uptime(3661), "1h 1m");
-    }
-
-    #[test]
-    fn format_uptime_days() {
-        assert_eq!(format_uptime(86400), "1d 0h 0m");
-        assert_eq!(format_uptime(90061), "1d 1h 1m");
+    fn format_uptime_values() {
+        for (input, expected) in [
+            (0, "0s"),
+            (30, "30s"),
+            (59, "59s"),
+            (119, "1m 59s"),
+            (120, "2m"),
+            (150, "2m 30s"),
+            (3600, "1h 0m"),
+            (3661, "1h 1m"),
+            (86400, "1d 0h 0m"),
+            (90061, "1d 1h 1m"),
+        ] {
+            assert_eq!(format_uptime(input), expected);
+        }
     }
 
     #[test]
@@ -1327,127 +1254,56 @@ mod tests {
     }
 
     #[test]
-    fn format_temp_value() {
-        assert_eq!(format_temp(Some(65.0)), "   65.0°C");
-        assert_eq!(format_temp(Some(0.0)), "    0.0°C");
+    fn format_temp_values() {
+        for (input, expected) in [
+            (Some(65.0), "   65.0°C"),
+            (Some(0.0), "    0.0°C"),
+            (None, "      N/A"),
+            (Some(f32::NAN), "      N/A"),
+            (Some(100.5), "  100.5°C"),
+        ] {
+            assert_eq!(format_temp(input), expected);
+        }
+    }
+
+    fn test_procs() -> Vec<ProcessInfo> {
+        vec![
+            ProcessInfo {
+                name: "firefox".into(),
+                pid: 100,
+                cpu: 0.0,
+                memory: 0,
+                virtual_memory: 0,
+                run_time: 0,
+                status: "Running".into(),
+            },
+            ProcessInfo {
+                name: "bash".into(),
+                pid: 200,
+                cpu: 0.0,
+                memory: 0,
+                virtual_memory: 0,
+                run_time: 0,
+                status: "Sleep".into(),
+            },
+        ]
     }
 
     #[test]
-    fn format_temp_none() {
-        assert_eq!(format_temp(None), "      N/A");
-    }
-
-    #[test]
-    fn format_temp_nan() {
-        assert_eq!(format_temp(Some(f32::NAN)), "      N/A");
-    }
-
-    #[test]
-    fn format_temp_large() {
-        assert_eq!(format_temp(Some(100.5)), "  100.5°C");
-    }
-
-    #[test]
-    fn filter_processes_by_name() {
-        let p1 = ProcessInfo {
-            name: "firefox".into(),
-            pid: 100,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Running".into(),
-        };
-        let p2 = ProcessInfo {
-            name: "bash".into(),
-            pid: 200,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Sleep".into(),
-        };
-        let procs = vec![p1, p2];
-        let result = filter_processes("fire", &procs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].pid, 100);
-    }
-
-    #[test]
-    fn filter_processes_by_pid() {
-        let p1 = ProcessInfo {
-            name: "firefox".into(),
-            pid: 100,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Running".into(),
-        };
-        let p2 = ProcessInfo {
-            name: "bash".into(),
-            pid: 200,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Sleep".into(),
-        };
-        let procs = vec![p1, p2];
-        let result = filter_processes("200", &procs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].pid, 200);
-    }
-
-    #[test]
-    fn filter_processes_empty_query_returns_all() {
-        let p1 = ProcessInfo {
-            name: "firefox".into(),
-            pid: 100,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Running".into(),
-        };
-        let p2 = ProcessInfo {
-            name: "bash".into(),
-            pid: 200,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Sleep".into(),
-        };
-        let procs = vec![p1, p2];
-        let result = filter_processes("", &procs);
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn filter_processes_name_and_pid() {
-        let p1 = ProcessInfo {
-            name: "firefox".into(),
-            pid: 100,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Running".into(),
-        };
-        let p2 = ProcessInfo {
-            name: "bash".into(),
-            pid: 200,
-            cpu: 0.0,
-            memory: 0,
-            virtual_memory: 0,
-            run_time: 0,
-            status: "Sleep".into(),
-        };
-        let procs = vec![p1, p2];
-        let result = filter_processes("100", &procs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].pid, 100);
+    fn filter_processes_queries() {
+        let procs = test_procs();
+        for (query, expected_len, expected_pid) in [
+            ("fire", 1, Some(100)),
+            ("200", 1, Some(200)),
+            ("", 2, None),
+            ("100", 1, Some(100)),
+        ] {
+            let result = filter_processes(query, &procs);
+            assert_eq!(result.len(), expected_len, "query '{query}'");
+            if let Some(pid) = expected_pid {
+                assert_eq!(result[0].pid, pid, "query '{query}'");
+            }
+        }
     }
 
     #[test]
@@ -1565,38 +1421,19 @@ mod tests {
     }
 
     #[test]
-    fn format_timestamp_epoch() {
-        assert_eq!(format_timestamp(0), "1970-01-01 00:00:00");
-    }
-
-    #[test]
-    fn format_timestamp_one_second() {
-        assert_eq!(format_timestamp(1), "1970-01-01 00:00:01");
-    }
-
-    #[test]
-    fn format_timestamp_end_of_january() {
-        assert_eq!(format_timestamp(2_678_399), "1970-01-31 23:59:59");
-    }
-
-    #[test]
-    fn format_timestamp_february_first() {
-        assert_eq!(format_timestamp(2_678_400), "1970-02-01 00:00:00");
-    }
-
-    #[test]
-    fn format_timestamp_non_leap_feb_end() {
-        assert_eq!(format_timestamp(5_097_599), "1970-02-28 23:59:59");
-    }
-
-    #[test]
-    fn format_timestamp_march_first_non_leap() {
-        assert_eq!(format_timestamp(5_097_600), "1970-03-01 00:00:00");
-    }
-
-    #[test]
-    fn format_timestamp_year_boundary() {
-        assert_eq!(format_timestamp(31_536_000), "1971-01-01 00:00:00");
+    fn format_timestamp_values() {
+        for (input, expected) in [
+            (0, "1970-01-01 00:00:00"),
+            (1, "1970-01-01 00:00:01"),
+            (2_678_399, "1970-01-31 23:59:59"),
+            (2_678_400, "1970-02-01 00:00:00"),
+            (5_097_599, "1970-02-28 23:59:59"),
+            (5_097_600, "1970-03-01 00:00:00"),
+            (31_536_000, "1971-01-01 00:00:00"),
+            (68_256_000, "1972-03-01 00:00:00"),
+        ] {
+            assert_eq!(format_timestamp(input), expected);
+        }
     }
 
     #[test]
@@ -1606,11 +1443,6 @@ mod tests {
             result.starts_with("2999-"),
             "far-future timestamps capped at year 2999, got: {result}"
         );
-    }
-
-    #[test]
-    fn format_timestamp_leap_year_march() {
-        assert_eq!(format_timestamp(68_256_000), "1972-03-01 00:00:00");
     }
 
     // --- Status bar paused ---
