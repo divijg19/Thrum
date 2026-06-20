@@ -142,6 +142,7 @@ pub struct SelectionState {
     pub name: String,
 }
 
+#[expect(clippy::struct_excessive_bools)]
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -462,7 +463,7 @@ impl App {
             && match self.tab_orientation {
                 TabOrientation::Horizontal => row == 1,
                 TabOrientation::HorizontalFooter => row == self.term_height.saturating_sub(3),
-                _ => false,
+                TabOrientation::Sidebar => false,
             }
             && let Some(idx) = self.tab_from_horizontal_click(col)
         {
@@ -513,6 +514,7 @@ impl App {
         }
     }
 
+    #[expect(clippy::missing_const_for_fn)]
     fn move_selection(code: KeyCode, selection: &mut usize) -> bool {
         match code {
             KeyCode::Up => *selection = selection.saturating_sub(1),
@@ -524,6 +526,7 @@ impl App {
         true
     }
 
+    #[expect(clippy::missing_const_for_fn)]
     fn cycle_tab(&mut self, forward: bool) {
         let idx = self.active_tab.index();
         let n = Tab::ALL.len();
@@ -616,6 +619,7 @@ impl App {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+#[expect(clippy::struct_field_names)]
 pub struct Config {
     pub refresh_ms: u64,
     pub default_tab: Tab,
@@ -673,6 +677,7 @@ pub fn print_help() {
     eprintln!("  --help                Show this help");
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn parse_args(args: &[String]) -> CliAction {
     for arg in args {
         match arg.as_str() {
@@ -692,27 +697,25 @@ pub fn parse_args(args: &[String]) -> CliAction {
             }
         });
 
-    let mut cfg = match config_path {
-        Some(path) => {
-            let p = Path::new(path);
-            if !p.exists() {
-                return CliAction::Error(format!("config file '{path}' not found"));
-            }
-            match read_config_file(p) {
-                Ok(c) => c,
-                Err(e) => return CliAction::Error(e),
-            }
+    let mut cfg = if let Some(path) = config_path {
+        let p = Path::new(path);
+        if !p.exists() {
+            return CliAction::Error(format!("config file '{path}' not found"));
         }
-        None => match default_config_path() {
-            Some(p) => match read_config_file(&p) {
-                Ok(cfg) => cfg,
-                Err(e) => Config {
-                    config_warning: Some(e),
-                    ..Config::default()
-                },
+        match read_config_file(p) {
+            Ok(c) => c,
+            Err(e) => return CliAction::Error(e),
+        }
+    } else if let Some(p) = default_config_path() {
+        match read_config_file(&p) {
+            Ok(cfg) => cfg,
+            Err(e) => Config {
+                config_warning: Some(e),
+                ..Config::default()
             },
-            None => Config::default(),
-        },
+        }
+    } else {
+        Config::default()
     };
 
     let mut i = 0;
@@ -839,10 +842,6 @@ fn handle_search_input(query: &mut String, focused: &mut bool, key: KeyEvent) ->
         KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
             *focused = false;
             false
-        }
-        KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Delete => {
-            *focused = false;
-            true
         }
         KeyCode::F(_) | KeyCode::Insert | KeyCode::Home | KeyCode::End | KeyCode::Null => true,
         _ => {
