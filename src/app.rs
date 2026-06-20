@@ -128,7 +128,20 @@ impl Tab {
     }
 }
 
-#[expect(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TabState {
+    pub query: String,
+    pub focused: bool,
+    pub scroll: usize,
+    pub selection: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectionState {
+    pub pid: u32,
+    pub name: String,
+}
+
 pub struct App {
     pub active_tab: Tab,
     pub sidebar_visible: bool,
@@ -143,21 +156,11 @@ pub struct App {
     pub temp_history: VecDeque<u64>,
     pub disk_usage_history: VecDeque<u64>,
     pub swap_history: VecDeque<u64>,
-    pub proc_scroll: usize,
-    pub proc_selection: usize,
-    pub selected_pid: Option<u32>,
-    pub selected_name: Option<String>,
+    pub proc_state: TabState,
+    pub net_state: TabState,
+    pub files_state: TabState,
+    pub selected: Option<SelectionState>,
     pub kill_state: Option<KillState>,
-    pub proc_query: String,
-    pub proc_search_focused: bool,
-    pub net_query: String,
-    pub net_search_focused: bool,
-    pub files_query: String,
-    pub files_search_focused: bool,
-    pub net_scroll: usize,
-    pub net_selection: usize,
-    pub files_scroll: usize,
-    pub files_selection: usize,
     pub scroll_step: usize,
     pub proc_sort_field: ProcSortField,
     pub proc_sort_asc: bool,
@@ -187,21 +190,11 @@ impl App {
             temp_history: VecDeque::with_capacity(WINDOW),
             disk_usage_history: VecDeque::with_capacity(WINDOW),
             swap_history: VecDeque::with_capacity(WINDOW),
-            proc_scroll: 0,
-            proc_selection: 0,
-            selected_pid: None,
-            selected_name: None,
+            proc_state: TabState::default(),
+            net_state: TabState::default(),
+            files_state: TabState::default(),
+            selected: None,
             kill_state: None,
-            proc_query: String::new(),
-            proc_search_focused: false,
-            net_query: String::new(),
-            net_search_focused: false,
-            files_query: String::new(),
-            files_search_focused: false,
-            net_scroll: 0,
-            net_selection: 0,
-            files_scroll: 0,
-            files_selection: 0,
             scroll_step: 3,
             proc_sort_field: ProcSortField::Cpu,
             proc_sort_asc: false,
@@ -236,33 +229,14 @@ impl App {
         ('s', ProcSortField::Status, true),
     ];
 
-    #[expect(clippy::too_many_lines)]
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.should_quit = true;
             return;
         }
-        let search_tab = |tab: Tab, focused: &mut bool, query: &mut String| -> bool {
-            *focused && self.active_tab == tab && handle_search_input(query, focused, key)
-        };
-        let search_consumed =
-            search_tab(
-                Tab::Proc,
-                &mut self.proc_search_focused,
-                &mut self.proc_query,
-            ) || search_tab(Tab::Net, &mut self.net_search_focused, &mut self.net_query)
-                || search_tab(
-                    Tab::Files,
-                    &mut self.files_search_focused,
-                    &mut self.files_query,
-                );
 
-        if search_consumed {
-            let is_ctrl_k =
-                key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL);
-            if !is_ctrl_k {
-                return;
-            }
+        if self.handle_search_mode(key) {
+            return;
         }
 
         if self.help_visible {
@@ -272,14 +246,7 @@ impl App {
             }
         }
 
-        if self.kill_state == Some(KillState::Confirm) {
-            self.kill_state = match key.code {
-                KeyCode::Char(c) => KILL_SIGNAL_MAP
-                    .iter()
-                    .find(|&&(k, _, _)| k == c)
-                    .map(|&(_, _, s)| KillState::Dispatch(s)),
-                _ => None,
-            };
+        if self.handle_kill_confirm_mode(key) {
             return;
         }
 
@@ -288,21 +255,8 @@ impl App {
             return;
         }
 
-        if self.active_tab == Tab::Proc
-            && key.modifiers.is_empty()
-            && let KeyCode::Char(c) = key.code
-        {
-            if c == 'r' {
-                self.proc_sort_asc = !self.proc_sort_asc;
-                return;
-            }
-            for &(ch, field, asc) in Self::SORT_MAP {
-                if ch == c {
-                    self.proc_sort_field = field;
-                    self.proc_sort_asc = asc;
-                    return;
-                }
-            }
+        if self.handle_proc_sort_key(key) {
+            return;
         }
 
         match key.code {
@@ -319,9 +273,9 @@ impl App {
                 }
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => match self.active_tab {
-                Tab::Proc => self.proc_search_focused = true,
-                Tab::Net => self.net_search_focused = true,
-                Tab::Files => self.files_search_focused = true,
+                Tab::Proc => self.proc_state.focused = true,
+                Tab::Net => self.net_state.focused = true,
+                Tab::Files => self.files_state.focused = true,
                 _ => {}
             },
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -342,15 +296,14 @@ impl App {
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
                 match self.active_tab {
                     Tab::Proc => {
-                        Self::move_selection(key.code, &mut self.proc_selection);
-                        self.selected_pid = None;
-                        self.selected_name = None;
+                        Self::move_selection(key.code, &mut self.proc_state.selection);
+                        self.selected = None;
                     }
                     Tab::Net => {
-                        Self::move_selection(key.code, &mut self.net_selection);
+                        Self::move_selection(key.code, &mut self.net_state.selection);
                     }
                     Tab::Files => {
-                        Self::move_selection(key.code, &mut self.files_selection);
+                        Self::move_selection(key.code, &mut self.files_state.selection);
                     }
                     _ => {}
                 }
@@ -371,13 +324,13 @@ impl App {
             {
                 self.cycle_tab(false);
             }
-            KeyCode::Delete if self.active_tab == Tab::Proc && self.selected_pid.is_some() => {
+            KeyCode::Delete if self.active_tab == Tab::Proc && self.selected.is_some() => {
                 self.kill_state = Some(KillState::Confirm);
             }
             KeyCode::Char('k')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
                     && self.active_tab == Tab::Proc
-                    && self.selected_pid.is_some() =>
+                    && self.selected.is_some() =>
             {
                 self.kill_state = Some(KillState::Dispatch(Signal::Kill));
             }
@@ -385,30 +338,87 @@ impl App {
         }
     }
 
+    fn handle_search_mode(&mut self, key: KeyEvent) -> bool {
+        let is_ctrl_k =
+            key.code == KeyCode::Char('k') && key.modifiers.contains(KeyModifiers::CONTROL);
+        let state = match self.active_tab {
+            Tab::Proc => &mut self.proc_state,
+            Tab::Net => &mut self.net_state,
+            Tab::Files => &mut self.files_state,
+            _ => return false,
+        };
+        if state.focused {
+            let consumed = handle_search_input(&mut state.query, &mut state.focused, key);
+            if consumed && !is_ctrl_k {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn handle_kill_confirm_mode(&mut self, key: KeyEvent) -> bool {
+        if self.kill_state != Some(KillState::Confirm) {
+            return false;
+        }
+        self.kill_state = match key.code {
+            KeyCode::Char(c) => KILL_SIGNAL_MAP
+                .iter()
+                .find(|&&(k, _, _)| k == c)
+                .map(|&(_, _, s)| KillState::Dispatch(s)),
+            _ => None,
+        };
+        true
+    }
+
+    fn handle_proc_sort_key(&mut self, key: KeyEvent) -> bool {
+        if self.active_tab != Tab::Proc || !key.modifiers.is_empty() {
+            return false;
+        }
+        if let KeyCode::Char(c) = key.code {
+            if c == 'r' {
+                self.proc_sort_asc = !self.proc_sort_asc;
+                return true;
+            }
+            for &(ch, field, asc) in Self::SORT_MAP {
+                if ch == c {
+                    self.proc_sort_field = field;
+                    self.proc_sort_asc = asc;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn apply_scroll(&mut self, up: bool) {
         match self.active_tab {
             Tab::Proc => {
                 if up {
-                    self.proc_selection = self.proc_selection.saturating_sub(self.scroll_step);
+                    self.proc_state.selection =
+                        self.proc_state.selection.saturating_sub(self.scroll_step);
                 } else {
-                    self.proc_selection = self.proc_selection.saturating_add(self.scroll_step);
+                    self.proc_state.selection =
+                        self.proc_state.selection.saturating_add(self.scroll_step);
                 }
-                self.selected_pid = None;
-                self.selected_name = None;
+                self.selected = None;
                 self.kill_state = None;
             }
             Tab::Net => {
                 if up {
-                    self.net_selection = self.net_selection.saturating_sub(self.scroll_step);
+                    self.net_state.selection =
+                        self.net_state.selection.saturating_sub(self.scroll_step);
                 } else {
-                    self.net_selection = self.net_selection.saturating_add(self.scroll_step);
+                    self.net_state.selection =
+                        self.net_state.selection.saturating_add(self.scroll_step);
                 }
             }
             Tab::Files => {
                 if up {
-                    self.files_selection = self.files_selection.saturating_sub(self.scroll_step);
+                    self.files_state.selection =
+                        self.files_state.selection.saturating_sub(self.scroll_step);
                 } else {
-                    self.files_selection = self.files_selection.saturating_add(self.scroll_step);
+                    self.files_state.selection =
+                        self.files_state.selection.saturating_add(self.scroll_step);
                 }
             }
             _ => {}
@@ -448,19 +458,12 @@ impl App {
             }
         }
 
-        if self.tab_orientation == TabOrientation::Horizontal
-            && self.tab_bar_visible
-            && row == 1
-            && let Some(idx) = self.tab_from_horizontal_click(col)
-        {
-            self.active_tab = Tab::ALL[idx];
-            self.kill_state = None;
-            return;
-        }
-
-        if self.tab_orientation == TabOrientation::HorizontalFooter
-            && self.tab_bar_visible
-            && row == self.term_height.saturating_sub(3)
+        if self.tab_bar_visible
+            && match self.tab_orientation {
+                TabOrientation::Horizontal => row == 1,
+                TabOrientation::HorizontalFooter => row == self.term_height.saturating_sub(3),
+                _ => false,
+            }
             && let Some(idx) = self.tab_from_horizontal_click(col)
         {
             self.active_tab = Tab::ALL[idx];
@@ -469,47 +472,28 @@ impl App {
         }
 
         if matches!(self.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
+            let state = match self.active_tab {
+                Tab::Proc => &mut self.proc_state,
+                Tab::Net => &mut self.net_state,
+                Tab::Files => &mut self.files_state,
+                _ => unreachable!(),
+            };
             let tab_y: u16 = match self.tab_orientation {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
                 _ => 1,
             };
-            let (search_focused, query, selection, scroll, clear_pid) = match self.active_tab {
-                Tab::Proc => (
-                    &mut self.proc_search_focused,
-                    &self.proc_query,
-                    &mut self.proc_selection,
-                    self.proc_scroll,
-                    true,
-                ),
-                Tab::Net => (
-                    &mut self.net_search_focused,
-                    &self.net_query,
-                    &mut self.net_selection,
-                    self.net_scroll,
-                    false,
-                ),
-                Tab::Files => (
-                    &mut self.files_search_focused,
-                    &self.files_query,
-                    &mut self.files_selection,
-                    self.files_scroll,
-                    false,
-                ),
-                _ => unreachable!(),
-            };
-            let search_h: u16 = if !query.is_empty() || *search_focused {
+            let search_h: u16 = if !state.query.is_empty() || state.focused {
                 3
             } else {
                 0
             };
             let data_start = tab_y + search_h + 2;
             if row >= data_start {
-                *search_focused = false;
+                state.focused = false;
                 let offset = (row - data_start) as usize;
-                *selection = scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
-                if clear_pid {
-                    self.selected_pid = None;
-                    self.selected_name = None;
+                state.selection = state.scroll.saturating_add(offset.min(MAX_CLICK_OFFSET));
+                if self.active_tab == Tab::Proc {
+                    self.selected = None;
                     self.kill_state = None;
                 }
             }
@@ -897,17 +881,17 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Dash);
         assert!(app.sidebar_visible);
         assert!(!app.should_quit);
-        assert_eq!(app.proc_scroll, 0);
-        assert_eq!(app.proc_selection, 0);
-        assert!(app.selected_pid.is_none());
-        assert!(app.selected_name.is_none());
+        assert_eq!(app.proc_state.scroll, 0);
+        assert_eq!(app.proc_state.selection, 0);
+        assert!(app.selected.is_none());
+        assert!(app.selected.is_none());
         assert!(app.kill_state.is_none());
-        assert!(app.proc_query.is_empty());
-        assert!(!app.proc_search_focused);
-        assert!(app.net_query.is_empty());
-        assert!(!app.net_search_focused);
-        assert!(app.files_query.is_empty());
-        assert!(!app.files_search_focused);
+        assert!(app.proc_state.query.is_empty());
+        assert!(!app.proc_state.focused);
+        assert!(app.net_state.query.is_empty());
+        assert!(!app.net_state.focused);
+        assert!(app.files_state.query.is_empty());
+        assert!(!app.files_state.focused);
         assert_eq!(app.mem_history.len(), 0);
         assert_eq!(app.net_rx_history.len(), 0);
         assert_eq!(app.net_tx_history.len(), 0);
@@ -1044,33 +1028,37 @@ mod tests {
     fn selection_moves_down() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 1);
+        assert_eq!(app.proc_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 2);
+        assert_eq!(app.proc_state.selection, 2);
     }
 
     #[test]
     fn selected_pid_cleared_on_down() {
         let mut app = App::new();
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert!(app.selected_pid.is_none());
-        assert!(app.selected_name.is_none());
+        assert!(app.selected.is_none());
+        assert!(app.selected.is_none());
     }
 
     #[test]
     fn selected_pid_cleared_on_up() {
         let mut app = App::new();
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert!(app.selected_pid.is_none());
-        assert!(app.selected_name.is_none());
+        assert!(app.selected.is_none());
+        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -1079,35 +1067,37 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 2);
+        assert_eq!(app.proc_state.selection, 2);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 1);
+        assert_eq!(app.proc_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
     }
 
     #[test]
     fn selection_page_down() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, PAGE_SIZE);
+        assert_eq!(app.proc_state.selection, PAGE_SIZE);
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, PAGE_SIZE * 2);
+        assert_eq!(app.proc_state.selection, PAGE_SIZE * 2);
     }
 
     #[test]
     fn selected_pid_cleared_on_page_down() {
         let mut app = App::new();
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert!(app.selected_pid.is_none());
-        assert!(app.selected_name.is_none());
+        assert!(app.selected.is_none());
+        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -1115,23 +1105,25 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, PAGE_SIZE);
+        assert_eq!(app.proc_state.selection, PAGE_SIZE);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
     }
 
     #[test]
     fn selected_pid_cleared_on_page_up() {
         let mut app = App::new();
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert!(app.selected_pid.is_none());
-        assert!(app.selected_name.is_none());
+        assert!(app.selected.is_none());
+        assert!(app.selected.is_none());
     }
 
     #[test]
@@ -1139,7 +1131,7 @@ mod tests {
         let mut app = App::new();
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert!(app.kill_state.is_none());
     }
@@ -1152,58 +1144,61 @@ mod tests {
 
         app.active_tab = Tab::Net;
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 1);
+        assert_eq!(app.net_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 2);
+        assert_eq!(app.net_state.selection, 2);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 1);
+        assert_eq!(app.net_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 0);
+        assert_eq!(app.net_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 0);
+        assert_eq!(app.net_state.selection, 0);
 
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, PAGE_SIZE);
+        assert_eq!(app.net_state.selection, PAGE_SIZE);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 0);
+        assert_eq!(app.net_state.selection, 0);
 
         app.active_tab = Tab::Files;
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 1);
+        assert_eq!(app.files_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 2);
+        assert_eq!(app.files_state.selection, 2);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 1);
+        assert_eq!(app.files_state.selection, 1);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 0);
+        assert_eq!(app.files_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 0);
+        assert_eq!(app.files_state.selection, 0);
 
         app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, PAGE_SIZE);
+        assert_eq!(app.files_state.selection, PAGE_SIZE);
         app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
-        assert_eq!(app.files_selection, 0);
+        assert_eq!(app.files_state.selection, 0);
     }
 
     #[test]
     fn net_files_keyboard_noop_on_non_scrollable_tabs() {
         let mut app = App::new();
-        app.net_selection = 3;
-        app.files_selection = 5;
+        app.net_state.selection = 3;
+        app.files_state.selection = 5;
         app.active_tab = Tab::Dash;
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
-        assert_eq!(app.files_selection, 5, "Files unchanged on Dash");
+        assert_eq!(app.net_state.selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_state.selection, 5, "Files unchanged on Dash");
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
-        assert_eq!(app.files_selection, 5, "Files unchanged on Dash");
+        assert_eq!(app.net_state.selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_state.selection, 5, "Files unchanged on Dash");
     }
 
     #[test]
     fn delete_sets_kill_pending_on_proc() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         assert!(app.kill_state.is_none());
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
@@ -1213,7 +1208,10 @@ mod tests {
     fn ctrl_k_sets_immediate_kill() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
     }
@@ -1222,7 +1220,10 @@ mod tests {
     fn kill_pending_dismissed_by_any_key() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
@@ -1233,7 +1234,10 @@ mod tests {
     fn kill_pending_confirmed_by_one() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(app.kill_state, Some(KillState::Confirm));
         app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
@@ -1245,7 +1249,10 @@ mod tests {
         for &(key, _, expected) in KILL_SIGNAL_MAP {
             let mut app = App::new();
             app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-            app.selected_pid = Some(42);
+            app.selected = Some(SelectionState {
+                pid: 42,
+                name: String::new(),
+            });
             app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
             app.handle_key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
             assert_eq!(
@@ -1261,24 +1268,30 @@ mod tests {
     fn ctrl_k_exits_search_and_kills_in_one_press() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_search_focused = true;
-        app.selected_pid = Some(42);
+        app.proc_state.focused = true;
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
-        assert!(!app.proc_search_focused, "Ctrl+K should exit search");
+        assert!(!app.proc_state.focused, "Ctrl+K should exit search");
         assert_eq!(app.kill_state, Some(KillState::Dispatch(Signal::Kill)));
-        assert_eq!(app.selected_pid, Some(42));
+        assert_eq!(app.selected.as_ref().map(|s| s.pid), Some(42));
     }
 
     #[test]
     fn delete_exits_search_then_kill_on_second_press() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-        app.selected_pid = Some(42);
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: String::new(),
+        });
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(app.proc_search_focused);
+        assert!(app.proc_state.focused);
         // First Delete: exits search but does not trigger kill (key consumed)
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(!app.proc_search_focused);
+        assert!(!app.proc_state.focused);
         assert!(app.kill_state.is_none(), "key consumed by search exit");
         // Second Delete: now triggers kill confirm
         app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
@@ -1290,14 +1303,14 @@ mod tests {
         let mut app = App::new();
         assert_eq!(app.active_tab, Tab::Dash);
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(!app.proc_search_focused);
+        assert!(!app.proc_state.focused);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         assert_eq!(app.active_tab, Tab::Proc);
-        assert!(!app.proc_search_focused);
+        assert!(!app.proc_state.focused);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(app.proc_search_focused);
+        assert!(app.proc_state.focused);
     }
 
     #[test]
@@ -1305,13 +1318,13 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(app.proc_search_focused);
+        assert!(app.proc_state.focused);
         assert_eq!(app.active_tab, Tab::Proc);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
-        assert_eq!(app.proc_query, "fir");
+        assert_eq!(app.proc_state.query, "fir");
         assert_eq!(app.active_tab, Tab::Proc);
     }
 
@@ -1322,11 +1335,11 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
-        assert_eq!(app.proc_query, "ab");
+        assert_eq!(app.proc_state.query, "ab");
 
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        assert_eq!(app.proc_query, "a");
-        assert!(app.proc_search_focused);
+        assert_eq!(app.proc_state.query, "a");
+        assert!(app.proc_state.focused);
     }
 
     #[test]
@@ -1335,8 +1348,8 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        assert!(app.proc_query.is_empty());
-        assert!(!app.proc_search_focused);
+        assert!(app.proc_state.query.is_empty());
+        assert!(!app.proc_state.focused);
     }
 
     #[test]
@@ -1345,11 +1358,11 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert_eq!(app.proc_query, "x");
+        assert_eq!(app.proc_state.query, "x");
 
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app.proc_query.is_empty());
-        assert!(!app.proc_search_focused);
+        assert!(app.proc_state.query.is_empty());
+        assert!(!app.proc_state.focused);
     }
 
     #[test]
@@ -1360,8 +1373,8 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(!app.proc_search_focused);
-        assert_eq!(app.proc_query, "f");
+        assert!(!app.proc_state.focused);
+        assert_eq!(app.proc_state.query, "f");
     }
 
     #[test]
@@ -1369,12 +1382,12 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(app.proc_search_focused);
-        assert_eq!(app.proc_selection, 0);
+        assert!(app.proc_state.focused);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        assert!(!app.proc_search_focused, "Down exits search");
+        assert!(!app.proc_state.focused, "Down exits search");
         assert_eq!(
-            app.proc_selection, 1,
+            app.proc_state.selection, 1,
             "Down moves selection after exiting search"
         );
     }
@@ -1384,10 +1397,10 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(app.proc_search_focused);
+        assert!(app.proc_state.focused);
         // First Tab: exits search (key consumed), does not cycle tab
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        assert!(!app.proc_search_focused);
+        assert!(!app.proc_state.focused);
         assert_eq!(app.active_tab, Tab::Proc, "Tab key consumed by search exit");
         // Second Tab: now cycles to next tab
         app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
@@ -1399,11 +1412,11 @@ mod tests {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        app.proc_query = "test".to_owned();
-        assert!(app.proc_search_focused);
+        app.proc_state.query = "test".to_owned();
+        assert!(app.proc_state.focused);
         app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        assert!(app.proc_search_focused, "F1 should not exit search");
-        assert_eq!(app.proc_query, "test", "F1 should not clear query");
+        assert!(app.proc_state.focused, "F1 should not exit search");
+        assert_eq!(app.proc_state.query, "test", "F1 should not clear query");
     }
 
     #[test]
@@ -1411,18 +1424,18 @@ mod tests {
         for tab_key in ['3', '4'] {
             let mut app = App::new();
             app.handle_key(KeyEvent::new(KeyCode::Char(tab_key), KeyModifiers::NONE));
-            assert!(!app.net_search_focused);
-            assert!(!app.files_search_focused);
+            assert!(!app.net_state.focused);
+            assert!(!app.files_state.focused);
             app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
             if tab_key == '3' {
-                assert!(app.net_search_focused, "/ on Net should focus net search");
-                assert!(!app.files_search_focused, "files search should remain off");
+                assert!(app.net_state.focused, "/ on Net should focus net search");
+                assert!(!app.files_state.focused, "files search should remain off");
             } else {
                 assert!(
-                    app.files_search_focused,
+                    app.files_state.focused,
                     "/ on Files should focus files search"
                 );
-                assert!(!app.net_search_focused, "net search should remain off");
+                assert!(!app.net_state.focused, "net search should remain off");
             }
         }
     }
@@ -1431,9 +1444,9 @@ mod tests {
     fn key_slash_noop_on_dash() {
         let mut app = App::new();
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert!(!app.proc_search_focused);
-        assert!(!app.net_search_focused);
-        assert!(!app.files_search_focused);
+        assert!(!app.proc_state.focused);
+        assert!(!app.net_state.focused);
+        assert!(!app.files_state.focused);
     }
 
     #[test]
@@ -1444,15 +1457,15 @@ mod tests {
             app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
             app.handle_key(KeyEvent::new(KeyCode::Char(query_val), KeyModifiers::NONE));
             if tab_key == '3' {
-                assert_eq!(app.net_query, "e", "net query should be set");
+                assert_eq!(app.net_state.query, "e", "net query should be set");
             } else {
-                assert_eq!(app.files_query, "m", "files query should be set");
+                assert_eq!(app.files_state.query, "m", "files query should be set");
             }
             app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-            assert!(app.net_query.is_empty(), "net query cleared");
-            assert!(app.files_query.is_empty(), "files query cleared");
-            assert!(!app.net_search_focused, "net search unfocused");
-            assert!(!app.files_search_focused, "files search unfocused");
+            assert!(app.net_state.query.is_empty(), "net query cleared");
+            assert!(app.files_state.query.is_empty(), "files query cleared");
+            assert!(!app.net_state.focused, "net search unfocused");
+            assert!(!app.files_state.focused, "files search unfocused");
         }
     }
 
@@ -2067,12 +2080,14 @@ mod tests {
     fn selected_pid_cleared_on_scroll() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.selected_pid = Some(42);
-        app.selected_name = Some("bash".to_owned());
+        app.selected = Some(SelectionState {
+            pid: 42,
+            name: "bash".to_owned(),
+        });
         app.kill_state = Some(KillState::Confirm);
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert!(app.selected_pid.is_none(), "scroll clears selected_pid");
-        assert!(app.selected_name.is_none(), "scroll clears selected_name");
+        assert!(app.selected.is_none(), "scroll clears selected");
+        assert!(app.selected.is_none(), "scroll clears selected");
         assert!(app.kill_state.is_none(), "scroll clears kill_state");
     }
 
@@ -2080,40 +2095,40 @@ mod tests {
     fn mouse_scroll_up_on_proc_moves_selection_up() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_selection = 5;
+        app.proc_state.selection = 5;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.proc_selection, 2);
+        assert_eq!(app.proc_state.selection, 2);
     }
 
     #[test]
     fn mouse_scroll_down_on_proc_moves_selection_down() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_selection = 5;
+        app.proc_state.selection = 5;
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert_eq!(app.proc_selection, 8);
+        assert_eq!(app.proc_state.selection, 8);
     }
 
     #[test]
     fn mouse_scroll_wraps_at_zero() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
-        app.proc_selection = 1;
+        app.proc_state.selection = 1;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.proc_selection, 0);
+        assert_eq!(app.proc_state.selection, 0);
     }
 
     #[test]
     fn mouse_scroll_noop_on_non_proc() {
         let mut app = App::new();
         app.active_tab = Tab::Dash;
-        app.proc_selection = 5;
+        app.proc_state.selection = 5;
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert_eq!(app.proc_selection, 5);
+        assert_eq!(app.proc_state.selection, 5);
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.proc_selection, 5);
+        assert_eq!(app.proc_state.selection, 5);
     }
 
     #[test]
@@ -2141,19 +2156,28 @@ mod tests {
         let mut app = App::new();
 
         app.active_tab = Tab::Net;
-        app.net_selection = 5;
+        app.net_state.selection = 5;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.net_selection, 2, "Net scroll up by default step 3");
-        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert_eq!(app.net_selection, 5, "Net scroll down by default step 3");
-
-        app.active_tab = Tab::Files;
-        app.files_selection = 5;
-        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.files_selection, 2, "Files scroll up by default step 3");
+        assert_eq!(
+            app.net_state.selection, 2,
+            "Net scroll up by default step 3"
+        );
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
         assert_eq!(
-            app.files_selection, 5,
+            app.net_state.selection, 5,
+            "Net scroll down by default step 3"
+        );
+
+        app.active_tab = Tab::Files;
+        app.files_state.selection = 5;
+        app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
+        assert_eq!(
+            app.files_state.selection, 2,
+            "Files scroll up by default step 3"
+        );
+        app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
+        assert_eq!(
+            app.files_state.selection, 5,
             "Files scroll down by default step 3"
         );
     }
@@ -2163,32 +2187,32 @@ mod tests {
         let mut app = App::new();
 
         app.active_tab = Tab::Net;
-        app.net_selection = 1;
+        app.net_state.selection = 1;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.net_selection, 0);
+        assert_eq!(app.net_state.selection, 0);
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.net_selection, 0);
+        assert_eq!(app.net_state.selection, 0);
 
         app.active_tab = Tab::Files;
-        app.files_selection = 1;
+        app.files_state.selection = 1;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.files_selection, 0);
+        assert_eq!(app.files_state.selection, 0);
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.files_selection, 0);
+        assert_eq!(app.files_state.selection, 0);
     }
 
     #[test]
     fn net_files_mouse_scroll_noop_on_non_scrollable_tabs() {
         let mut app = App::new();
-        app.net_selection = 3;
-        app.files_selection = 7;
+        app.net_state.selection = 3;
+        app.files_state.selection = 7;
         app.active_tab = Tab::Dash;
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
-        assert_eq!(app.files_selection, 7, "Files unchanged on Dash");
+        assert_eq!(app.net_state.selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_state.selection, 7, "Files unchanged on Dash");
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.net_selection, 3, "Net unchanged on Dash");
-        assert_eq!(app.files_selection, 7, "Files unchanged on Dash");
+        assert_eq!(app.net_state.selection, 3, "Net unchanged on Dash");
+        assert_eq!(app.files_state.selection, 7, "Files unchanged on Dash");
     }
 
     // --- Mouse horizontal tab bar click ---
@@ -2428,11 +2452,17 @@ mod tests {
         };
         app.apply_config(&cfg);
         app.active_tab = Tab::Net;
-        app.net_selection = 20;
+        app.net_state.selection = 20;
         app.handle_mouse(0, 0, MouseEventKind::ScrollUp);
-        assert_eq!(app.net_selection, 15, "scroll uses configured step of 5");
+        assert_eq!(
+            app.net_state.selection, 15,
+            "scroll uses configured step of 5"
+        );
         app.handle_mouse(0, 0, MouseEventKind::ScrollDown);
-        assert_eq!(app.net_selection, 20, "scroll down uses configured step");
+        assert_eq!(
+            app.net_state.selection, 20,
+            "scroll down uses configured step"
+        );
     }
 
     #[test]

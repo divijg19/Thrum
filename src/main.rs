@@ -99,9 +99,10 @@ fn main() -> std::io::Result<()> {
                     app.handle_key(key);
                     let kill_dispatch = app.kill_state.take();
                     if let Some(app::KillState::Dispatch(signal)) = kill_dispatch
-                        && let Some(pid) = app.selected_pid
+                        && let Some(ref sel) = app.selected
                     {
-                        app.kill_feedback = Some(samplers.kill_process(pid, signal).message(pid));
+                        app.kill_feedback =
+                            Some(samplers.kill_process(sel.pid, signal).message(sel.pid));
                     } else if matches!(kill_dispatch, Some(app::KillState::Dispatch(_))) {
                         app.kill_feedback = Some("No process selected".to_owned());
                     }
