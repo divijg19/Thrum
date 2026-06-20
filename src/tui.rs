@@ -84,7 +84,7 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
@@ -439,7 +439,7 @@ fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, String)], he
     frame.render_widget(Paragraph::new(lines).fg(Color::Gray), info);
 }
 
-fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
+fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples) {
     render_info_block(
         frame,
         area,
@@ -461,7 +461,7 @@ fn render_time(frame: &mut Frame, area: Rect, samples: &Samples) {
     );
 }
 
-fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
     let mem_avail_gb = samples.mem_available as f64 / 1_073_741_824.0;
@@ -520,7 +520,7 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     );
 }
 
-fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
         Constraint::Length(9),
@@ -558,7 +558,7 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     );
 }
 
-fn render_cores(frame: &mut Frame, area: Rect, samples: &Samples) {
+fn render_cores(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples) {
     let block = Block::bordered().title(" Per-Core CPU ");
     frame.render_widget(&block, area);
     let inner = block.inner(area);
@@ -635,7 +635,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     );
 }
 
-fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
+fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [table_area, read_spark, write_spark] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
@@ -1030,6 +1030,20 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     render_sparkline(frame, mem_spark, " Memory ", &app.mem_history, Color::Cyan);
 }
 
+type TabRenderer = fn(&mut Frame, Rect, &mut App, &Samples);
+
+const RENDERERS: [TabRenderer; 9] = [
+    render_dash,
+    render_proc,
+    render_net,
+    render_files,
+    render_time,
+    render_temp,
+    render_cores,
+    render_disk,
+    render_mem,
+];
+
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let block = match app.tab_orientation {
         TabOrientation::Horizontal | TabOrientation::HorizontalFooter => {
@@ -1076,22 +1090,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         (chunks[0], chunks[1])
     };
 
-    match app.active_tab {
-        Tab::Dash => render_dash(frame, tab_area, app, samples),
-        Tab::Proc => render_proc(frame, tab_area, app, samples),
-        Tab::Net => render_net(frame, tab_area, app, samples),
-        Tab::Files => render_files(frame, tab_area, app, samples),
-        Tab::Time => render_time(frame, tab_area, samples),
-        Tab::Temp => render_temp(frame, tab_area, app, samples),
-        Tab::Cores => render_cores(frame, tab_area, samples),
-        Tab::Disk => render_disk(frame, tab_area, app, samples),
-        Tab::Mem => render_mem(frame, tab_area, app, samples),
-    }
+    RENDERERS[app.active_tab.index()](frame, tab_area, app, samples);
 
-    render_status_and_overlays(frame, tab_area, status_area, app);
+    render_status_bar(frame, status_area, app);
+    render_overlays(frame, tab_area, app);
 }
 
-fn render_status_and_overlays(frame: &mut Frame, tab_area: Rect, status_area: Rect, app: &mut App) {
+fn render_status_bar(frame: &mut Frame, status_area: Rect, app: &App) {
     let (ctx, hints) = StatusBar::build(app).display();
     let [ctx_area, hints_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Min(20)]).areas(status_area);
@@ -1107,7 +1112,9 @@ fn render_status_and_overlays(frame: &mut Frame, tab_area: Rect, status_area: Re
             .fg(Color::Gray),
         hints_area,
     );
+}
 
+fn render_overlays(frame: &mut Frame, tab_area: Rect, app: &mut App) {
     if let Some(fb) = app.kill_feedback.take() {
         render_kill_feedback(frame, tab_area, &fb);
     }

@@ -43,6 +43,7 @@ impl KillResult {
     }
 }
 
+#[derive(Default)]
 pub struct DiskInfo {
     pub device: String,
     pub mount_point: String,
@@ -78,6 +79,7 @@ pub struct DiskIoInfo {
     pub write_rate: u64,
 }
 
+#[derive(Default)]
 pub struct TempInfo {
     pub label: String,
     pub temperature: Option<f32>,
@@ -108,6 +110,29 @@ pub struct Samples {
     pub load_one: f64,
     pub load_five: f64,
     pub load_fifteen: f64,
+}
+
+impl Samples {
+    pub fn avg_temperature(&self) -> f32 {
+        let valid: Vec<f32> = self
+            .temperatures
+            .iter()
+            .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
+            .collect();
+        if valid.is_empty() {
+            0.0
+        } else {
+            valid.iter().sum::<f32>() / valid.len() as f32
+        }
+    }
+
+    pub fn avg_disk_usage(&self) -> f32 {
+        if self.disks.is_empty() {
+            0.0
+        } else {
+            self.disks.iter().map(|d| d.usage_pct).sum::<f32>() / self.disks.len() as f32
+        }
+    }
 }
 
 struct RatePairTracker<K: Eq + Hash> {
@@ -542,5 +567,71 @@ mod tests {
         tracker.retain(|k| k == "a");
         assert_eq!(tracker.rate_pair("a".to_owned(), 180, 300), (30, 50));
         assert_eq!(tracker.rate_pair("b".to_owned(), 350, 500), (0, 0));
+    }
+
+    #[test]
+    fn avg_temperature_empty_returns_zero() {
+        let samples = Samples::default();
+        assert!((samples.avg_temperature() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn avg_temperature_with_values() {
+        let samples = Samples {
+            temperatures: vec![
+                TempInfo {
+                    temperature: Some(30.0),
+                    ..TempInfo::default()
+                },
+                TempInfo {
+                    temperature: Some(50.0),
+                    ..TempInfo::default()
+                },
+            ],
+            ..Samples::default()
+        };
+        assert!((samples.avg_temperature() - 40.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn avg_temperature_ignores_none() {
+        let samples = Samples {
+            temperatures: vec![
+                TempInfo {
+                    temperature: Some(30.0),
+                    ..TempInfo::default()
+                },
+                TempInfo {
+                    temperature: None,
+                    ..TempInfo::default()
+                },
+            ],
+            ..Samples::default()
+        };
+        assert!((samples.avg_temperature() - 30.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn avg_disk_usage_empty_returns_zero() {
+        let samples = Samples::default();
+        assert!((samples.avg_disk_usage() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn avg_disk_usage_with_values() {
+        let samples = Samples {
+            disks: vec![
+                DiskInfo {
+                    usage_pct: 20.0,
+                    ..DiskInfo::default()
+                },
+                DiskInfo {
+                    usage_pct: 60.0,
+                    ..DiskInfo::default()
+                },
+            ],
+            ..Samples::default()
+        };
+        assert!((samples.avg_disk_usage() - 40.0).abs() < f32::EPSILON);
     }
 }
