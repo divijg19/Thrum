@@ -14,6 +14,13 @@ use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const MAX_HINTS: usize = 4;
 
+const STYLE_GREEN: Style = Style::new().fg(Color::Green);
+const STYLE_CYAN: Style = Style::new().fg(Color::Cyan);
+const STYLE_YELLOW: Style = Style::new().fg(Color::Yellow);
+const STYLE_MAGENTA: Style = Style::new().fg(Color::Magenta);
+const STYLE_DARK_GRAY: Style = Style::new().fg(Color::DarkGray);
+const STYLE_SELECTED: Style = Style::new().bg(Color::DarkGray);
+
 fn format_memory(gib: f64, pct: f64) -> String {
     format!("{gib:.1} GiB  {pct:.1}%")
 }
@@ -68,7 +75,7 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
         let style = if is_active {
             Style::new().fg(tab_color(tab)).bold()
         } else {
-            Style::new().fg(Color::DarkGray)
+            STYLE_DARK_GRAY
         };
         let label = format!("{} {:<5}", indicator, tab.label());
         lines.push(Line::from(Span::styled(label, style)));
@@ -96,7 +103,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     .areas(gauges);
 
     let g = Gauge::default()
-        .gauge_style(Style::new().fg(Color::Green))
+        .gauge_style(STYLE_GREEN)
         .percent((samples.cpu_usage.min(100.0)) as u16)
         .label(format!("CPU: {:.1}%", samples.cpu_usage.min(100.0)));
     frame.render_widget(&g, cpu_area);
@@ -106,7 +113,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
     let mem_g = Gauge::default()
-        .gauge_style(Style::new().fg(Color::Cyan))
+        .gauge_style(STYLE_CYAN)
         .percent(mem_pct)
         .label(format!(
             "Mem: {mem_pct_f:.1}%  {mem_used_gb:.1}/{mem_total_gb:.1} GiB"
@@ -125,7 +132,7 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         (0, "Swap: N/A".to_string())
     };
     let swap_g = Gauge::default()
-        .gauge_style(Style::new().fg(Color::Yellow))
+        .gauge_style(STYLE_YELLOW)
         .percent(swap_pct)
         .label(swap_label);
     frame.render_widget(&swap_g, swap_area);
@@ -320,7 +327,7 @@ fn render_filtered_table<'a, T>(
     column_widths: &[Constraint],
     headers: &[&str],
     filter_fn: impl Fn(&T, &str) -> bool,
-    row_fn: impl Fn(&'a T, bool) -> Row<'a>,
+    row_fn: impl Fn(&'a T) -> Row<'a>,
 ) -> bool {
     let has_query = !query.is_empty();
 
@@ -352,11 +359,11 @@ fn render_filtered_table<'a, T>(
         .map(|(i, item)| {
             let is_selected = i == rel_sel;
             let style = if is_selected {
-                Style::new().bg(Color::DarkGray)
+                STYLE_SELECTED
             } else {
                 Style::default()
             };
-            row_fn(item, is_selected).style(style)
+            row_fn(item).style(style)
         })
         .collect();
 
@@ -381,7 +388,7 @@ fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) 
             if focused {
                 vec![Span::styled(
                     format!("{cursor} Type to filter\u{2026}"),
-                    Style::new().fg(Color::DarkGray),
+                    STYLE_DARK_GRAY,
                 )]
             } else {
                 vec![]
@@ -625,23 +632,14 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
         |d: &DiskInfo, q| {
             d.mount_point.to_lowercase().contains(q) || d.device.to_lowercase().contains(q)
         },
-        |d: &DiskInfo, _selected| {
+        |d: &DiskInfo| {
             Row::new(vec![
                 Cell::from(d.device.as_str()),
                 Cell::from(d.mount_point.as_str()),
                 Cell::from(d.fs.as_str()),
-                Cell::from(Span::styled(
-                    format_bytes(d.total, true),
-                    Style::new().fg(Color::Magenta),
-                )),
-                Cell::from(Span::styled(
-                    format_bytes(d.available, true),
-                    Style::new().fg(Color::Magenta),
-                )),
-                Cell::from(Span::styled(
-                    format!("{:.1}%", d.usage_pct),
-                    Style::new().fg(Color::Magenta),
-                )),
+                Cell::from(Span::styled(format_bytes(d.total, true), STYLE_MAGENTA)),
+                Cell::from(Span::styled(format_bytes(d.available, true), STYLE_MAGENTA)),
+                Cell::from(Span::styled(format!("{:.1}%", d.usage_pct), STYLE_MAGENTA)),
                 Cell::from(d.kind.as_str()),
             ])
         },
@@ -672,13 +670,10 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &App, samples: &Samples) {
         .map(|d| {
             Row::new(vec![
                 Cell::from(d.mount_point.as_str()),
-                Cell::from(Span::styled(
-                    format_bytes(d.read_rate, false),
-                    Style::new().fg(Color::Cyan),
-                )),
+                Cell::from(Span::styled(format_bytes(d.read_rate, false), STYLE_CYAN)),
                 Cell::from(Span::styled(
                     format_bytes(d.write_rate, false),
-                    Style::new().fg(Color::Yellow),
+                    STYLE_YELLOW,
                 )),
             ])
         })
@@ -740,17 +735,11 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
         ],
         &["Interface", "RX", "TX", "State", "MAC", "IP"],
         |i: &NetInfo, q| i.name.to_lowercase().contains(q),
-        |i: &NetInfo, _selected| {
+        |i: &NetInfo| {
             Row::new(vec![
                 Cell::from(i.name.as_str()),
-                Cell::from(Span::styled(
-                    format_bytes(i.rx_bytes, false),
-                    Style::new().fg(Color::Yellow),
-                )),
-                Cell::from(Span::styled(
-                    format_bytes(i.tx_bytes, false),
-                    Style::new().fg(Color::Yellow),
-                )),
+                Cell::from(Span::styled(format_bytes(i.rx_bytes, false), STYLE_YELLOW)),
+                Cell::from(Span::styled(format_bytes(i.tx_bytes, false), STYLE_YELLOW)),
                 Cell::from(i.state.as_str()),
                 Cell::from(i.mac.as_str()),
                 Cell::from(i.ip.as_str()),
@@ -852,8 +841,8 @@ impl StatusBar {
             return "Help (? to close)".to_owned();
         }
         if app.kill_state == Some(KillState::Confirm) {
-            let pid = app.selected.as_ref().map_or(0, |s| s.pid);
-            let name = app.selected.as_ref().map_or("?", |s| s.name.as_str());
+            let pid = app.selected_pid();
+            let name = app.selected_name();
             return format!("Kill? PID {pid} ({name})");
         }
         if let Some(ref err) = app.error_msg {
@@ -906,18 +895,8 @@ impl StatusBar {
         }
 
         if matches!(app.active_tab, Tab::Proc | Tab::Net | Tab::Files) {
-            let active_query = match app.active_tab {
-                Tab::Proc => &app.proc_state.query,
-                Tab::Net => &app.net_state.query,
-                Tab::Files => &app.files_state.query,
-                _ => "",
-            };
-            let focused = match app.active_tab {
-                Tab::Proc => app.proc_state.focused,
-                Tab::Net => app.net_state.focused,
-                Tab::Files => app.files_state.focused,
-                _ => false,
-            };
+            let active_query = app.tab_state().map_or("", |s| s.query.as_str());
+            let focused = app.tab_state().is_some_and(|s| s.focused);
             if !focused && active_query.is_empty() {
                 hints.push("/ Search".to_owned());
             } else if !active_query.is_empty() {
@@ -964,13 +943,13 @@ fn render_horizontal_tabs(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::with_capacity(Tab::ALL.len() * 2 - 1);
     for (i, tab) in Tab::ALL.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" │ ", Style::new().fg(Color::DarkGray)));
+            spans.push(Span::styled(" │ ", STYLE_DARK_GRAY));
         }
         let is_active = tab == &app.active_tab;
         let style = if is_active {
             Style::new().fg(tab_color(*tab)).bold()
         } else {
-            Style::new().fg(Color::DarkGray)
+            STYLE_DARK_GRAY
         };
         spans.push(Span::styled(tab.label(), style));
     }
@@ -1025,7 +1004,7 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
         .map(|(i, p)| {
             let is_selected = i == rel_sel;
             let style = if is_selected {
-                Style::new().bg(Color::DarkGray)
+                STYLE_SELECTED
             } else {
                 Style::default()
             };
@@ -1034,12 +1013,9 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
             Row::new(vec![
                 Cell::from(p.name.as_str()),
                 Cell::from(format!("{}", p.pid)),
-                Cell::from(Span::styled(
-                    format!("{:.1}", p.cpu),
-                    Style::new().fg(Color::Green),
-                )),
-                Cell::from(Span::styled(mem_label, Style::new().fg(Color::Cyan))),
-                Cell::from(Span::styled(virt_label, Style::new().fg(Color::Magenta))),
+                Cell::from(Span::styled(format!("{:.1}", p.cpu), STYLE_GREEN)),
+                Cell::from(Span::styled(mem_label, STYLE_CYAN)),
+                Cell::from(Span::styled(virt_label, STYLE_MAGENTA)),
                 Cell::from(format_uptime(p.run_time)),
                 Cell::from(p.status.as_str()),
             ])
@@ -1146,8 +1122,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     }
 
     if app.kill_state == Some(KillState::Confirm) {
-        let pid = app.selected.as_ref().map_or(0, |s| s.pid);
-        let name = app.selected.as_ref().map_or("?", |s| s.name.as_str());
+        let pid = app.selected_pid();
+        let name = app.selected_name();
         render_kill_confirm(frame, tab_area, pid, name);
     }
 }
@@ -1578,5 +1554,114 @@ mod tests {
         });
         let (ctx, _) = StatusBar::build(&app).display();
         assert_eq!(ctx, "Kill? PID 42 (bash)", "kill confirm wins over error");
+    }
+
+    #[test]
+    fn clamp_scroll_noop_when_selection_visible() {
+        let mut scroll = 5;
+        let (start, end) = clamp_scroll(7, &mut scroll, 20, 10);
+        assert_eq!(scroll, 5, "scroll unchanged");
+        assert_eq!(start, 5);
+        assert_eq!(end, 12);
+    }
+
+    #[test]
+    fn clamp_scroll_moves_scroll_up_when_selection_above() {
+        let mut scroll = 10;
+        let (start, end) = clamp_scroll(3, &mut scroll, 20, 10);
+        assert_eq!(scroll, 3, "scroll moves to selection");
+        assert_eq!(start, 3);
+        assert_eq!(end, 10);
+    }
+
+    #[test]
+    fn clamp_scroll_moves_scroll_down_when_selection_below() {
+        let mut scroll = 0;
+        let (start, end) = clamp_scroll(15, &mut scroll, 20, 10);
+        assert_eq!(scroll, 10, "scroll moves to reveal selection");
+        assert_eq!(start, 10);
+        assert_eq!(end, 17);
+    }
+
+    #[test]
+    fn clamp_scroll_with_zero_height_avoids_underflow() {
+        let mut scroll = 0;
+        // height=4 => vis=0 => no scroll adjustment; max_visible=1
+        let (start, end) = clamp_scroll(5, &mut scroll, 10, 4);
+        assert_eq!(scroll, 0, "zero vis skips scroll adjustment");
+        assert_eq!(start, 0);
+        assert_eq!(end, 1);
+    }
+
+    #[test]
+    fn clamp_scroll_clamps_to_count() {
+        let mut scroll = 100;
+        let (start, end) = clamp_scroll(5, &mut scroll, 10, 10);
+        assert_eq!(scroll, 5, "scroll capped at count-1");
+        assert_eq!(start, 5);
+        assert_eq!(end, 10);
+    }
+
+    #[test]
+    fn format_memory_label_shows_gib_above_threshold() {
+        assert_eq!(format_memory_label(2_147_483_648), "2.0GiB");
+        assert_eq!(format_memory_label(1_073_741_824), "1.0GiB");
+        assert_eq!(format_memory_label(5_368_709_120), "5.0GiB");
+    }
+
+    #[test]
+    fn format_memory_label_shows_mib_below_threshold() {
+        assert_eq!(format_memory_label(0), "0MiB");
+        assert_eq!(format_memory_label(1_048_576), "1MiB");
+        assert_eq!(format_memory_label(524_288_000), "500MiB");
+    }
+
+    #[test]
+    fn format_memory_label_edge_boundary() {
+        assert_eq!(format_memory_label(1_073_741_823), "1024MiB");
+        assert_eq!(format_memory_label(1_073_741_824), "1.0GiB");
+    }
+
+    #[test]
+    fn format_memory_displays_gib_and_pct() {
+        assert_eq!(format_memory(2.5, 45.0), "2.5 GiB  45.0%");
+        assert_eq!(format_memory(0.0, 0.0), "0.0 GiB  0.0%");
+        assert_eq!(format_memory(15.9, 100.0), "15.9 GiB  100.0%");
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_name_ascending() {
+        let procs = test_procs();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Name, true);
+        assert_eq!(refs[0].name, "bash");
+        assert_eq!(refs[1].name, "firefox");
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_name_descending() {
+        let procs = test_procs();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Name, false);
+        assert_eq!(refs[0].name, "firefox");
+        assert_eq!(refs[1].name, "bash");
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_pid() {
+        let procs = test_procs();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Pid, true);
+        assert_eq!(refs[0].pid, 100);
+        assert_eq!(refs[1].pid, 200);
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_pid_descending() {
+        let procs = test_procs();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Pid, false);
+        assert_eq!(refs[0].pid, 200);
+        assert_eq!(refs[1].pid, 100);
     }
 }

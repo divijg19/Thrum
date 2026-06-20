@@ -1,11 +1,10 @@
 #![deny(unsafe_code, trivial_casts)]
 #![expect(clippy::multiple_crate_versions)] // ratatui→kasuari→hashbrown 0.16 vs ratatui→hashbrown 0.17
-#![allow(
+#![expect(
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units
     clippy::cast_sign_loss,            // unsigned counters always non-negative
-    clippy::similar_names,             // intentional: mem_used/mem_total etc.
-    clippy::uninlined_format_args      // intentional: positional args are more readable
+    clippy::similar_names              // intentional: mem_used/mem_total etc.
 )]
 
 use std::time::Duration;

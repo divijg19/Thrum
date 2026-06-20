@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "thrum"
-version = "0.4.10"
+version = "0.5.2"
 dependencies = [
  "crossterm",
  "ratatui",
