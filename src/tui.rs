@@ -497,9 +497,18 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let swap_used_pct = app::pct(samples.swap_used, samples.swap_total);
     let swap_free_pct = app::pct(swap_free, samples.swap_total);
 
+    let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(8),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+
     render_info_block(
         frame,
-        area,
+        info,
         &[
             ("Memory      ", format!("{mem_total_gb:.1} GiB")),
             ("Used        ", format_memory(mem_used_gb, mem_used_pct)),
@@ -511,15 +520,6 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
             ("Free        ", format_memory(swap_free_gb, swap_free_pct)),
         ],
     );
-
-    let [_, _, mem_spark, swap_spark, _] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(8),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
 
     render_sparkline(
         frame,
