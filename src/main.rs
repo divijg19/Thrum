@@ -66,7 +66,7 @@ fn main() -> std::io::Result<()> {
 
     loop {
         if !app.paused {
-            let refresh_proc = app.active_tab == app::Tab::Proc;
+            let refresh_proc = app.active_tab.is_proc();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 last_samples = samplers.sample(refresh_proc);
             }));
