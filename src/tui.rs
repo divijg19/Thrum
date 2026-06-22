@@ -14,10 +14,28 @@ use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 
 const MAX_HINTS: usize = 4;
 
+const SPARKLINE_HEIGHT: u16 = 3;
+
 const SPARK_CPU_TITLE: &str = " CPU ";
 const SPARK_CPU_COLOR: Color = Color::Green;
 const SPARK_MEM_TITLE: &str = " Memory ";
 const SPARK_MEM_COLOR: Color = Color::Cyan;
+const SPARK_NET_RX_TITLE: &str = " RX ";
+const SPARK_NET_RX_COLOR: Color = Color::Green;
+const SPARK_NET_TX_TITLE: &str = " TX ";
+const SPARK_NET_TX_COLOR: Color = Color::Yellow;
+const SPARK_DISK_READ_TITLE: &str = " Read ";
+const SPARK_DISK_READ_COLOR: Color = Color::Cyan;
+const SPARK_DISK_WRITE_TITLE: &str = " Write ";
+const SPARK_DISK_WRITE_COLOR: Color = Color::Yellow;
+const SPARK_USAGE_TITLE: &str = " Usage ";
+const SPARK_USAGE_COLOR: Color = Color::Magenta;
+const SPARK_MEM_HISTORY_TITLE: &str = " History ";
+const SPARK_MEM_HISTORY_COLOR: Color = Color::LightBlue;
+const SPARK_SWAP_TITLE: &str = " Swap ";
+const SPARK_SWAP_COLOR: Color = Color::Yellow;
+const SPARK_TEMP_TITLE: &str = " History ";
+const SPARK_TEMP_COLOR: Color = Color::Red;
 
 const STYLE_GREEN: Style = Style::new().fg(Color::Green);
 const STYLE_CYAN: Style = Style::new().fg(Color::Cyan);
@@ -46,6 +64,7 @@ fn clamp_scroll(selection: usize, scroll: &mut usize, count: usize, height: u16)
 }
 
 impl Tab {
+    /// Returns the accent color associated with this tab.
     pub const fn color(self) -> Color {
         match self {
             Self::Dash => Color::Green,
@@ -95,8 +114,8 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(SPARKLINE_HEIGHT),
+        Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
@@ -512,8 +531,8 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(8),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(SPARKLINE_HEIGHT),
+        Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -536,16 +555,16 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     render_sparkline(
         frame,
         mem_spark,
-        " History ",
+        SPARK_MEM_HISTORY_TITLE,
         &app.mem_history,
-        Color::LightBlue,
+        SPARK_MEM_HISTORY_COLOR,
     );
     render_sparkline(
         frame,
         swap_spark,
-        " Swap ",
+        SPARK_SWAP_TITLE,
         &app.swap_history,
-        Color::Yellow,
+        SPARK_SWAP_COLOR,
     );
 }
 
@@ -571,7 +590,7 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
         .collect();
 
     let [table_area, spark_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(area);
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(SPARKLINE_HEIGHT)]).areas(area);
 
     let table = Table::new(rows, widths)
         .header(Row::new(vec!["Sensor", "Temp", "Max", "Critical"]))
@@ -581,9 +600,9 @@ fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     render_sparkline(
         frame,
         spark_area,
-        " History ",
+        SPARK_TEMP_TITLE,
         &app.temp_history,
-        Color::Red,
+        SPARK_TEMP_COLOR,
     );
 }
 
@@ -616,7 +635,8 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
         render_search_bar(frame, area, &app.files_state.query, app.files_state.focused);
 
     let [table_area, spark_area] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(content_area);
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(SPARKLINE_HEIGHT)])
+            .areas(content_area);
 
     let query = app.files_state.query.clone();
     if !render_filtered_table(
@@ -658,17 +678,17 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     render_sparkline(
         frame,
         spark_area,
-        " Usage ",
+        SPARK_USAGE_TITLE,
         &app.disk_usage_history,
-        Color::Magenta,
+        SPARK_USAGE_COLOR,
     );
 }
 
 fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [table_area, read_spark, write_spark] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(SPARKLINE_HEIGHT),
+        Constraint::Length(SPARKLINE_HEIGHT),
     ])
     .areas(area);
 
@@ -701,16 +721,16 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     render_sparkline(
         frame,
         read_spark,
-        " Read ",
+        SPARK_DISK_READ_TITLE,
         &app.disk_read_history,
-        Color::Cyan,
+        SPARK_DISK_READ_COLOR,
     );
     render_sparkline(
         frame,
         write_spark,
-        " Write ",
+        SPARK_DISK_WRITE_TITLE,
         &app.disk_write_history,
-        Color::Yellow,
+        SPARK_DISK_WRITE_COLOR,
     );
 }
 
@@ -719,8 +739,8 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
 
     let [table_area, rx_spark, tx_spark] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(SPARKLINE_HEIGHT),
+        Constraint::Length(SPARKLINE_HEIGHT),
     ])
     .areas(content_area);
 
@@ -757,8 +777,20 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
         return;
     }
 
-    render_sparkline(frame, rx_spark, " RX ", &app.net_rx_history, Color::Green);
-    render_sparkline(frame, tx_spark, " TX ", &app.net_tx_history, Color::Yellow);
+    render_sparkline(
+        frame,
+        rx_spark,
+        SPARK_NET_RX_TITLE,
+        &app.net_rx_history,
+        SPARK_NET_RX_COLOR,
+    );
+    render_sparkline(
+        frame,
+        tx_spark,
+        SPARK_NET_TX_TITLE,
+        &app.net_tx_history,
+        SPARK_NET_TX_COLOR,
+    );
 }
 
 fn sort_arrow(field: ProcSortField, sort_field: ProcSortField, asc: bool) -> &'static str {
@@ -980,8 +1012,8 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 
     let [table_area, cpu_spark, mem_spark] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(SPARKLINE_HEIGHT),
+        Constraint::Length(SPARKLINE_HEIGHT),
     ])
     .areas(content_area);
 
@@ -994,6 +1026,32 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
     let visible = &filtered[start..end];
     let rel_sel = app.proc_state.selection.saturating_sub(start);
 
+    let table = build_proc_table(visible, rel_sel, app, &filtered, samples);
+    frame.render_widget(table, table_area);
+
+    render_sparkline(
+        frame,
+        cpu_spark,
+        SPARK_CPU_TITLE,
+        &app.cpu_history,
+        SPARK_CPU_COLOR,
+    );
+    render_sparkline(
+        frame,
+        mem_spark,
+        SPARK_MEM_TITLE,
+        &app.mem_history,
+        SPARK_MEM_COLOR,
+    );
+}
+
+fn build_proc_table<'a>(
+    visible: &[&'a ProcessInfo],
+    rel_sel: usize,
+    app: &App,
+    filtered: &[&ProcessInfo],
+    samples: &Samples,
+) -> Table<'a> {
     let widths: [Constraint; 7] = [
         Constraint::Fill(1),
         Constraint::Length(7),
@@ -1029,7 +1087,7 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
         })
         .collect();
 
-    let table = Table::new(rows, widths)
+    Table::new(rows, widths)
         .header(Row::new(PROC_HEADERS.iter().map(|&(label, field)| {
             Cell::from(format!(
                 "{}{}",
@@ -1041,23 +1099,7 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
             " Processes ({}/{}) ",
             filtered.len(),
             samples.processes.len(),
-        )));
-    frame.render_widget(table, table_area);
-
-    render_sparkline(
-        frame,
-        cpu_spark,
-        SPARK_CPU_TITLE,
-        &app.cpu_history,
-        SPARK_CPU_COLOR,
-    );
-    render_sparkline(
-        frame,
-        mem_spark,
-        SPARK_MEM_TITLE,
-        &app.mem_history,
-        SPARK_MEM_COLOR,
-    );
+        )))
 }
 
 type TabRenderer = fn(&mut Frame, Rect, &mut App, &Samples);
@@ -1074,6 +1116,7 @@ const RENDERERS: [TabRenderer; 9] = [
     render_mem,
 ];
 
+/// Entry point for rendering a single frame: tabs, content, status bar, and overlays.
 pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let block = if app.tab_orientation.is_horizontal() || app.sidebar_visible {
         Block::bordered().title(" Thrum ")
@@ -1086,7 +1129,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let content_area = match app.tab_orientation {
         TabOrientation::Sidebar if app.sidebar_visible => {
             let [sidebar_area, content_area] =
-                Layout::horizontal([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
+                Layout::horizontal([Constraint::Length(app::SIDEBAR_WIDTH), Constraint::Fill(1)])
+                    .areas(inner);
             render_sidebar(frame, sidebar_area, app);
             content_area
         }

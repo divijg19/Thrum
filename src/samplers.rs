@@ -7,6 +7,7 @@ use sysinfo::{
     Signal, System,
 };
 
+/// Snapshot of a single process (name, PID, CPU, memory, uptime, status).
 pub struct ProcessInfo {
     pub name: String,
     pub pid: u32,
@@ -17,6 +18,7 @@ pub struct ProcessInfo {
     pub status: String,
 }
 
+/// Snapshot of a network interface (name, bytes, state, MAC, IP).
 pub struct NetInfo {
     pub name: String,
     pub rx_bytes: u64,
@@ -26,6 +28,7 @@ pub struct NetInfo {
     pub ip: String,
 }
 
+/// Outcome of a kill-process attempt.
 pub enum KillResult {
     Killed,
     NotFound,
@@ -34,6 +37,7 @@ pub enum KillResult {
 }
 
 impl KillResult {
+    /// Returns a human-readable message describing the kill result.
     pub fn message(&self, pid: u32) -> String {
         match self {
             Self::Killed => format!("Killed PID {pid}"),
@@ -44,6 +48,7 @@ impl KillResult {
     }
 }
 
+/// Snapshot of a mounted disk (device, mount point, capacity, usage).
 #[derive(Default)]
 pub struct DiskInfo {
     pub device: String,
@@ -55,6 +60,7 @@ pub struct DiskInfo {
     pub kind: String,
 }
 
+/// System identity information (hostname, OS, kernel, architecture, uptime).
 #[derive(Default)]
 pub struct SysInfo {
     pub hostname: String,
@@ -68,18 +74,21 @@ pub struct SysInfo {
     pub distro: String,
 }
 
+/// Per-core CPU usage and frequency.
 pub struct CpuInfo {
     pub label: String,
     pub usage: f32,
     pub freq: u64,
 }
 
+/// Disk I/O rates (read/write) for a mount point.
 pub struct DiskIoInfo {
     pub mount_point: String,
     pub read_rate: u64,
     pub write_rate: u64,
 }
 
+/// Sensor temperature reading with optional max/critical thresholds.
 #[derive(Default)]
 pub struct TempInfo {
     pub label: String,
@@ -88,6 +97,7 @@ pub struct TempInfo {
     pub critical: Option<f32>,
 }
 
+/// Complete snapshot of all sampled system metrics at a point in time.
 #[derive(Default)]
 pub struct Samples {
     pub sys_info: SysInfo,
@@ -114,6 +124,7 @@ pub struct Samples {
 }
 
 impl Samples {
+    /// Returns the average temperature across all sensors, ignoring non-finite values.
     pub fn avg_temperature(&self) -> f32 {
         let (sum, count) = self
             .temperatures
@@ -123,6 +134,7 @@ impl Samples {
         if count == 0 { 0.0 } else { sum / count as f32 }
     }
 
+    /// Returns the average disk usage percentage across all mounted disks.
     pub fn avg_disk_usage(&self) -> f32 {
         if self.disks.is_empty() {
             0.0
@@ -169,6 +181,7 @@ impl<K: Eq + Hash> RatePairTracker<K> {
     }
 }
 
+/// Manages system data collection: sampling processes, networks, disks, temperatures.
 pub struct Samplers {
     sys: System,
     networks: Networks,
@@ -184,6 +197,7 @@ pub struct Samplers {
 }
 
 impl Samplers {
+    /// Creates a new `Samplers` with initialised system data sources.
     pub fn new() -> Self {
         let networks = Networks::new_with_refreshed_list();
         let network_rates = RatePairTracker::from_iter(networks.iter().map(|(name, data)| {
@@ -217,6 +231,7 @@ impl Samplers {
         }
     }
 
+    /// Samples all system metrics and returns a [`Samples`] snapshot.
     pub fn sample(&mut self, refresh_proc: bool) -> Samples {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -432,6 +447,7 @@ impl Samplers {
             .collect()
     }
 
+    /// Sends a signal to a process by PID, returning the outcome.
     pub fn kill_process(&self, pid: u32, signal: Signal) -> KillResult {
         let sys_pid = Pid::from(pid as usize);
         if sys_pid == Pid::from(std::process::id() as usize) {
