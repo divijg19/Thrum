@@ -1,8 +1,15 @@
+//! Terminal UI rendering: tab dispatch, widgets, status bar, overlays, and layout.
+//!
+//! Entry point: [`draw`]. Each tab implements [`TabWidget`] for dispatch via
+//! [`RENDERERS`]. Utilities include sparklines, info blocks, filtered tables,
+//! and status bar hints. Layout constants and style presets are defined at
+//! the module level.
+
 use std::collections::VecDeque;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Sparkline, Table};
 
@@ -44,6 +51,34 @@ const STYLE_MAGENTA: Style = Style::new().fg(Color::Magenta);
 const STYLE_DARK_GRAY: Style = Style::new().fg(Color::DarkGray);
 const STYLE_SELECTED: Style = Style::new().bg(Color::DarkGray);
 const STYLE_RED: Style = Style::new().fg(Color::Red);
+const STYLE_GRAY: Style = Style::new().fg(Color::Gray);
+const STYLE_BLUE: Style = Style::new().fg(Color::Blue);
+const STYLE_BOLD: Style = Style::new().bold();
+
+// Layout constants
+const DASH_GAUGE_HEIGHT: u16 = 3;
+const SEARCH_BAR_HEIGHT: u16 = 3;
+const INFO_BLOCK_HEIGHT: u16 = 8;
+const SINGLE_LINE_HEIGHT: u16 = 1;
+const STATUS_HINTS_MIN_WIDTH: u16 = 20;
+
+// Dash gauge widths
+const DASH_CPU_GAUGE_WIDTH: u16 = 34;
+const DASH_MEM_SWAP_GAUGE_WIDTH: u16 = 33;
+
+// Table column widths
+const TEMP_COL_WIDTH: u16 = 9;
+const FILES_DEVICE_WIDTH: u16 = 14;
+const FILES_FS_WIDTH: u16 = 6;
+const FILES_SIZE_WIDTH: u16 = 9;
+const FILES_USEPCT_WIDTH: u16 = 6;
+const FILES_KIND_WIDTH: u16 = 7;
+const DISK_IO_RW_WIDTH: u16 = 12;
+const NET_RX_TX_WIDTH: u16 = 12;
+const NET_STATE_WIDTH: u16 = 8;
+const NET_MAC_WIDTH: u16 = 17;
+const PROC_PID_WIDTH: u16 = 7;
+const PROC_NUM_WIDTH: u16 = 10;
 
 fn format_memory(gib: f64, pct: f64) -> String {
     format!("{gib:.1} GiB  {pct:.1}%")
@@ -110,14 +145,15 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+#[expect(clippy::needless_pass_by_ref_mut)]
 fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(DASH_GAUGE_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(SINGLE_LINE_HEIGHT),
+        Constraint::Length(SINGLE_LINE_HEIGHT),
         Constraint::Fill(1),
     ])
     .areas(area);
@@ -143,9 +179,9 @@ fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 
 fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
     let [cpu_area, mem_area, swap_area] = Layout::horizontal([
-        Constraint::Percentage(34),
-        Constraint::Percentage(33),
-        Constraint::Percentage(33),
+        Constraint::Percentage(DASH_CPU_GAUGE_WIDTH),
+        Constraint::Percentage(DASH_MEM_SWAP_GAUGE_WIDTH),
+        Constraint::Percentage(DASH_MEM_SWAP_GAUGE_WIDTH),
     ])
     .areas(area);
 
@@ -187,27 +223,27 @@ fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
 
 fn render_dash_load(frame: &mut Frame, area: Rect, samples: &Samples) {
     let l = Paragraph::new(Line::from(vec![
-        Span::styled("Load Average  ", Style::new().bold()),
+        Span::styled("Load Average  ", STYLE_BOLD),
         Span::raw(format!(
             "{:.2} (1m)  {:.2} (5m)  {:.2} (15m)",
             samples.load_one, samples.load_five, samples.load_fifteen,
         )),
     ]))
     .alignment(Alignment::Center)
-    .gray();
+    .style(STYLE_GRAY);
     frame.render_widget(&l, area);
 }
 
 fn render_dash_summary(frame: &mut Frame, area: Rect, samples: &Samples) {
     let s = Paragraph::new(Line::from(vec![
-        Span::styled("Net ", Style::new().bold()),
+        Span::styled("Net ", STYLE_BOLD),
         Span::raw(format!(
             "TX {}  RX {}",
             format_bytes(samples.net_tx_rate, false).trim(),
             format_bytes(samples.net_rx_rate, false).trim(),
         )),
         Span::raw("  "),
-        Span::styled("Disk ", Style::new().bold()),
+        Span::styled("Disk ", STYLE_BOLD),
         Span::raw(format!(
             "R {}  W {}",
             format_bytes(samples.disk_read_rate, false).trim(),
@@ -215,7 +251,7 @@ fn render_dash_summary(frame: &mut Frame, area: Rect, samples: &Samples) {
         )),
     ]))
     .alignment(Alignment::Center)
-    .gray();
+    .style(STYLE_GRAY);
     frame.render_widget(&s, area);
 }
 
@@ -369,7 +405,7 @@ fn sort_processes(filtered: &mut [&ProcessInfo], field: ProcSortField, asc: bool
             ProcSortField::Memory => a.memory.cmp(&b.memory),
             ProcSortField::VirtualMemory => a.virtual_memory.cmp(&b.virtual_memory),
             ProcSortField::RunTime => a.run_time.cmp(&b.run_time),
-            ProcSortField::Status => a.status.cmp(&b.status),
+            ProcSortField::Status => a.status.cmp(b.status),
         };
         if asc { ord } else { ord.reverse() }
     });
@@ -403,7 +439,7 @@ fn render_filtered_table<'a, T>(
 
     if count == 0 && has_query {
         let p = Paragraph::new(empty_msg)
-            .fg(Color::DarkGray)
+            .style(STYLE_DARK_GRAY)
             .alignment(Alignment::Center);
         frame.render_widget(p, area);
         return false;
@@ -436,7 +472,8 @@ fn render_filtered_table<'a, T>(
 
 fn render_search_bar(frame: &mut Frame, area: Rect, query: &str, focused: bool) -> Rect {
     let (search_area, remaining) = if !query.is_empty() || focused {
-        let [s, r] = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        let [s, r] = Layout::vertical([Constraint::Length(SEARCH_BAR_HEIGHT), Constraint::Fill(1)])
+            .areas(area);
         (Some(s), r)
     } else {
         (None, area)
@@ -479,14 +516,9 @@ fn render_info_block(frame: &mut Frame, area: Rect, items: &[(&str, String)]) {
 
     let lines: Vec<Line> = items
         .iter()
-        .map(|(label, value)| {
-            Line::from(vec![
-                Span::styled(*label, Style::new().bold()),
-                Span::raw(value),
-            ])
-        })
+        .map(|(label, value)| Line::from(vec![Span::styled(*label, STYLE_BOLD), Span::raw(value)]))
         .collect();
-    frame.render_widget(Paragraph::new(lines).fg(Color::Gray), info);
+    frame.render_widget(Paragraph::new(lines).style(STYLE_GRAY), info);
 }
 
 fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples) {
@@ -510,6 +542,7 @@ fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples)
     );
 }
 
+#[expect(clippy::needless_pass_by_ref_mut)]
 fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let mem_total_gb = samples.mem_total as f64 / 1_073_741_824.0;
     let mem_used_gb = samples.mem_used as f64 / 1_073_741_824.0;
@@ -530,7 +563,7 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
 
     let [_, info, mem_spark, swap_spark, _] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(8),
+        Constraint::Length(INFO_BLOCK_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Fill(1),
@@ -568,12 +601,13 @@ fn render_mem(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     );
 }
 
+#[expect(clippy::needless_pass_by_ref_mut)]
 fn render_temp(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let widths: [Constraint; 4] = [
         Constraint::Fill(1),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(9),
+        Constraint::Length(TEMP_COL_WIDTH),
+        Constraint::Length(TEMP_COL_WIDTH),
+        Constraint::Length(TEMP_COL_WIDTH),
     ];
 
     let rows: Vec<Row> = samples
@@ -616,13 +650,13 @@ fn render_cores(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples
         return;
     }
 
-    let constraints = vec![Constraint::Length(1); core_count];
+    let constraints = vec![Constraint::Length(SINGLE_LINE_HEIGHT); core_count];
     let chunks = Layout::vertical(&constraints).split(inner);
 
     for (i, cpu) in samples.cpus.iter().enumerate() {
         if let Some(chunk) = chunks.get(i) {
             let gauge = Gauge::default()
-                .gauge_style(Style::new().fg(Color::Blue))
+                .gauge_style(STYLE_BLUE)
                 .percent((cpu.usage.min(100.0)) as u16)
                 .label(format!("{}  {:.1}%  {}MHz", cpu.label, cpu.usage, cpu.freq));
             frame.render_widget(&gauge, *chunk);
@@ -648,13 +682,13 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
         |count, total| format!(" Filesystems ({count}/{total}) "),
         "No matching filesystems",
         &[
-            Constraint::Length(14),
+            Constraint::Length(FILES_DEVICE_WIDTH),
             Constraint::Fill(1),
-            Constraint::Length(6),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Length(6),
-            Constraint::Length(7),
+            Constraint::Length(FILES_FS_WIDTH),
+            Constraint::Length(FILES_SIZE_WIDTH),
+            Constraint::Length(FILES_SIZE_WIDTH),
+            Constraint::Length(FILES_USEPCT_WIDTH),
+            Constraint::Length(FILES_KIND_WIDTH),
         ],
         &["Device", "Mount", "FS", "Size", "Avail", "Use%", "Kind"],
         |d: &DiskInfo, q| {
@@ -684,6 +718,7 @@ fn render_files(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples)
     );
 }
 
+#[expect(clippy::needless_pass_by_ref_mut)]
 fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
     let [table_area, read_spark, write_spark] = Layout::vertical([
         Constraint::Fill(1),
@@ -709,8 +744,8 @@ fn render_disk(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 
     let widths: [Constraint; 3] = [
         Constraint::Fill(1),
-        Constraint::Length(12),
-        Constraint::Length(12),
+        Constraint::Length(DISK_IO_RW_WIDTH),
+        Constraint::Length(DISK_IO_RW_WIDTH),
     ];
 
     let table = Table::new(rows, widths)
@@ -755,10 +790,10 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
         "No matching interfaces",
         &[
             Constraint::Fill(1),
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Length(17),
+            Constraint::Length(NET_RX_TX_WIDTH),
+            Constraint::Length(NET_RX_TX_WIDTH),
+            Constraint::Length(NET_STATE_WIDTH),
+            Constraint::Length(NET_MAC_WIDTH),
             Constraint::Fill(1),
         ],
         &["Interface", "RX", "TX", "State", "MAC", "IP"],
@@ -768,7 +803,7 @@ fn render_net(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
                 Cell::from(i.name.as_str()),
                 Cell::from(Span::styled(format_bytes(i.rx_bytes, false), STYLE_YELLOW)),
                 Cell::from(Span::styled(format_bytes(i.tx_bytes, false), STYLE_YELLOW)),
-                Cell::from(i.state.as_str()),
+                Cell::from(i.state),
                 Cell::from(i.mac.as_str()),
                 Cell::from(i.ip.as_str()),
             ])
@@ -832,7 +867,7 @@ fn render_overlay(frame: &mut Frame, area: Rect, lines: Vec<Line>, title: &str, 
 
     let p = Paragraph::new(lines)
         .block(Block::bordered().title(format!(" {title} ")))
-        .fg(Color::Gray);
+        .style(STYLE_GRAY);
     frame.render_widget(&p, centered);
 }
 
@@ -1004,7 +1039,7 @@ fn render_proc(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) 
 
     if count == 0 && !app.proc_state.query.is_empty() {
         let p = Paragraph::new("No matching processes")
-            .fg(Color::DarkGray)
+            .style(STYLE_DARK_GRAY)
             .alignment(Alignment::Center);
         frame.render_widget(p, content_area);
         return;
@@ -1054,12 +1089,12 @@ fn build_proc_table<'a>(
 ) -> Table<'a> {
     let widths: [Constraint; 7] = [
         Constraint::Fill(1),
-        Constraint::Length(7),
-        Constraint::Length(7),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(10),
+        Constraint::Length(PROC_PID_WIDTH),
+        Constraint::Length(PROC_PID_WIDTH),
+        Constraint::Length(PROC_NUM_WIDTH),
+        Constraint::Length(PROC_NUM_WIDTH),
+        Constraint::Length(PROC_NUM_WIDTH),
+        Constraint::Length(PROC_NUM_WIDTH),
     ];
 
     let rows: Vec<Row> = visible
@@ -1081,7 +1116,7 @@ fn build_proc_table<'a>(
                 Cell::from(Span::styled(mem_label, STYLE_CYAN)),
                 Cell::from(Span::styled(virt_label, STYLE_MAGENTA)),
                 Cell::from(format_uptime(p.run_time)),
-                Cell::from(p.status.as_str()),
+                Cell::from(p.status),
             ])
             .style(style)
         })
@@ -1102,18 +1137,35 @@ fn build_proc_table<'a>(
         )))
 }
 
-type TabRenderer = fn(&mut Frame, Rect, &mut App, &Samples);
+/// Trait for tab-specific rendering, enabling v0.6.x widget-oriented dispatch.
+pub trait TabWidget {
+    /// Render the tab content into the given area.
+    fn render(&self, frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples);
+}
 
-const RENDERERS: [TabRenderer; 9] = [
-    render_dash,
-    render_proc,
-    render_net,
-    render_files,
-    render_time,
-    render_temp,
-    render_cores,
-    render_disk,
-    render_mem,
+macro_rules! impl_tab {
+    ($name:ident, $render:ident) => {
+        struct $name;
+        impl TabWidget for $name {
+            fn render(&self, frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
+                $render(frame, area, app, samples);
+            }
+        }
+    };
+}
+
+impl_tab!(DashTab, render_dash);
+impl_tab!(ProcTab, render_proc);
+impl_tab!(NetTab, render_net);
+impl_tab!(FilesTab, render_files);
+impl_tab!(TimeTab, render_time);
+impl_tab!(TempTab, render_temp);
+impl_tab!(CoresTab, render_cores);
+impl_tab!(DiskTab, render_disk);
+impl_tab!(MemTab, render_mem);
+
+const RENDERERS: &[&dyn TabWidget; 9] = &[
+    &DashTab, &ProcTab, &NetTab, &FilesTab, &TimeTab, &TempTab, &CoresTab, &DiskTab, &MemTab,
 ];
 
 /// Entry point for rendering a single frame: tabs, content, status bar, and overlays.
@@ -1136,7 +1188,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         }
         TabOrientation::Horizontal if app.tab_bar_visible => {
             let [tab_area, content_area] =
-                Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+                Layout::vertical([Constraint::Length(SINGLE_LINE_HEIGHT), Constraint::Fill(1)])
+                    .areas(inner);
             render_horizontal_tabs(frame, tab_area, app);
             content_area
         }
@@ -1148,19 +1201,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
     let (tab_area, status_area) = if has_footer {
         let chunks = Layout::vertical([
             Constraint::Fill(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(SINGLE_LINE_HEIGHT),
+            Constraint::Length(SINGLE_LINE_HEIGHT),
         ])
         .split(content_area);
         render_horizontal_tabs(frame, chunks[1], app);
         (chunks[0], chunks[2])
     } else {
         let chunks =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(content_area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(SINGLE_LINE_HEIGHT)])
+                .split(content_area);
         (chunks[0], chunks[1])
     };
 
-    RENDERERS[app.active_tab.index()](frame, tab_area, app, samples);
+    RENDERERS[app.active_tab.index()].render(frame, tab_area, app, samples);
 
     render_status_bar(frame, status_area, app);
     render_overlays(frame, tab_area, app);
@@ -1169,17 +1223,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
 fn render_status_bar(frame: &mut Frame, status_area: Rect, app: &App) {
     let (ctx, hints) = StatusBar::display(app);
     let [ctx_area, hints_area] =
-        Layout::horizontal([Constraint::Fill(1), Constraint::Min(20)]).areas(status_area);
+        Layout::horizontal([Constraint::Fill(1), Constraint::Min(STATUS_HINTS_MIN_WIDTH)])
+            .areas(status_area);
     frame.render_widget(
         Paragraph::new(ctx)
             .alignment(Alignment::Left)
-            .fg(Color::Gray),
+            .style(STYLE_GRAY),
         ctx_area,
     );
     frame.render_widget(
         Paragraph::new(hints)
             .alignment(Alignment::Right)
-            .fg(Color::Gray),
+            .style(STYLE_GRAY),
         hints_area,
     );
 }
@@ -1330,7 +1385,7 @@ mod tests {
                 memory: 0,
                 virtual_memory: 0,
                 run_time: 0,
-                status: "Running".into(),
+                status: "Running",
             },
             ProcessInfo {
                 name: "bash".into(),
@@ -1339,7 +1394,7 @@ mod tests {
                 memory: 0,
                 virtual_memory: 0,
                 run_time: 0,
-                status: "Sleep".into(),
+                status: "Sleep",
             },
         ]
     }
@@ -1766,7 +1821,7 @@ mod tests {
                 memory: 50,
                 virtual_memory: 200,
                 run_time: 100,
-                status: "Sleep".into(),
+                status: "Sleep",
             },
             ProcessInfo {
                 name: "firefox".into(),
@@ -1775,7 +1830,7 @@ mod tests {
                 memory: 1000,
                 virtual_memory: 5000,
                 run_time: 500,
-                status: "Running".into(),
+                status: "Running",
             },
             ProcessInfo {
                 name: "chrome".into(),
@@ -1784,7 +1839,7 @@ mod tests {
                 memory: 500,
                 virtual_memory: 3000,
                 run_time: 300,
-                status: "Running".into(),
+                status: "Running",
             },
             ProcessInfo {
                 name: "sshd".into(),
@@ -1793,7 +1848,7 @@ mod tests {
                 memory: 10,
                 virtual_memory: 50,
                 run_time: 2000,
-                status: "Idle".into(),
+                status: "Idle",
             },
         ]
     }
