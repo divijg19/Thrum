@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::hash::Hash;
 
 use sysinfo::{
@@ -114,16 +115,12 @@ pub struct Samples {
 
 impl Samples {
     pub fn avg_temperature(&self) -> f32 {
-        let valid: Vec<f32> = self
+        let (sum, count) = self
             .temperatures
             .iter()
             .filter_map(|t| t.temperature.filter(|t| t.is_finite()))
-            .collect();
-        if valid.is_empty() {
-            0.0
-        } else {
-            valid.iter().sum::<f32>() / valid.len() as f32
-        }
+            .fold((0.0f32, 0usize), |(sum, count), t| (sum + t, count + 1));
+        if count == 0 { 0.0 } else { sum / count as f32 }
     }
 
     pub fn avg_disk_usage(&self) -> f32 {
@@ -292,11 +289,16 @@ impl Samplers {
                     data.total_transmitted(),
                     data.operational_state(),
                     data.mac_address().to_string(),
-                    data.ip_networks()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    data.ip_networks().iter().enumerate().fold(
+                        String::new(),
+                        |mut acc, (i, ip)| {
+                            if i > 0 {
+                                acc.push_str(", ");
+                            }
+                            let _ = write!(acc, "{ip}");
+                            acc
+                        },
+                    ),
                 )
             })
             .collect();
@@ -360,7 +362,7 @@ impl Samplers {
     }
 
     fn collect_disk_io(&mut self) -> (Vec<DiskIoInfo>, u64, u64) {
-        let mut disk_io: Vec<DiskIoInfo> = Vec::new();
+        let mut disk_io: Vec<DiskIoInfo> = Vec::with_capacity(self.disks.list().len());
         let mut disk_read_rate = 0u64;
         let mut disk_write_rate = 0u64;
         for d in self.disks.list() {

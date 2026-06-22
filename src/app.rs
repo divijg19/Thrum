@@ -446,7 +446,9 @@ impl App {
                 TabOrientation::Horizontal if self.tab_bar_visible => 2,
                 _ => 1,
             };
-            let state = self.tab_state_mut().expect("checked Proc|Net|Files");
+            let Some(state) = self.tab_state_mut() else {
+                return;
+            };
             let search_h: u16 = if !state.query.is_empty() || state.focused {
                 3
             } else {

@@ -258,6 +258,20 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
+/// Days from 1970-01-01 to 2999-12-31 (exclusive upper bound), computed at compile time.
+const MAX_CUMULATIVE: u64 = {
+    let mut d = 0u64;
+    let mut y = 1970u64;
+    while y <= 2999 {
+        d += 365;
+        if y.is_multiple_of(4) && !y.is_multiple_of(100) || y.is_multiple_of(400) {
+            d += 1;
+        }
+        y += 1;
+    }
+    d - 1
+};
+
 fn format_timestamp(secs: u64) -> String {
     let days_raw = secs / 86400;
     let rem = secs % 86400;
@@ -265,18 +279,7 @@ fn format_timestamp(secs: u64) -> String {
     let min = (rem % 3600) / 60;
     let sec = rem % 60;
 
-    let max_year = 2999u64;
-    let max_cumulative = {
-        let mut d = 0u64;
-        for y in 1970..=max_year {
-            d += 365;
-            if y.is_multiple_of(4) && !y.is_multiple_of(100) || y.is_multiple_of(400) {
-                d += 1;
-            }
-        }
-        d - 1
-    };
-    let day = days_raw.min(max_cumulative);
+    let day = days_raw.min(MAX_CUMULATIVE);
 
     let mut year = 1970u64;
     let mut day = day;
@@ -323,9 +326,18 @@ fn filter_processes<'a>(query: &str, processes: &'a [ProcessInfo]) -> Vec<&'a Pr
     }
     let q = query.to_lowercase();
     let query_pid = query.parse::<u32>().ok();
+    let q_bytes = q.as_bytes();
     processes
         .iter()
-        .filter(|p| p.name.to_lowercase().contains(&q) || query_pid.is_some_and(|pid| p.pid == pid))
+        .filter(|p| {
+            if query_pid.is_some_and(|pid| p.pid == pid) {
+                return true;
+            }
+            p.name
+                .as_bytes()
+                .windows(q_bytes.len())
+                .any(|w| w.eq_ignore_ascii_case(q_bytes))
+        })
         .collect()
 }
 
@@ -1306,6 +1318,16 @@ mod tests {
     }
 
     #[test]
+    fn filter_processes_case_insensitive() {
+        let procs = test_procs();
+        for (query, expected_pid) in [("FIRE", 100), ("BASH", 200)] {
+            let result = filter_processes(query, &procs);
+            assert_eq!(result.len(), 1, "query '{query}'");
+            assert_eq!(result[0].pid, expected_pid, "query '{query}'");
+        }
+    }
+
+    #[test]
     fn status_bar_search_hint_in_hints() {
         let mut app = App::new();
         for tab in [Tab::Proc, Tab::Net, Tab::Files] {
@@ -1403,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_hints_max_three() {
+    fn status_bar_hints_max_four() {
         let mut app = App::new();
         app.active_tab = Tab::Proc;
         app.selected = Some(SelectionState {
@@ -1449,6 +1471,16 @@ mod tests {
             result.starts_with("2999-"),
             "far-future timestamps capped at year 2999, got: {result}"
         );
+    }
+
+    #[test]
+    fn format_timestamp_leap_year_2000() {
+        assert_eq!(format_timestamp(951_782_400), "2000-02-29 00:00:00");
+    }
+
+    #[test]
+    fn format_timestamp_century_non_leap_2100() {
+        assert_eq!(format_timestamp(4_107_542_400), "2100-03-01 00:00:00");
     }
 
     // --- Status bar paused ---
@@ -1679,5 +1711,101 @@ mod tests {
         sort_processes(&mut refs, ProcSortField::Pid, false);
         assert_eq!(refs[0].pid, 200);
         assert_eq!(refs[1].pid, 100);
+    }
+
+    fn test_procs_diverse() -> Vec<ProcessInfo> {
+        vec![
+            ProcessInfo {
+                name: "bash".into(),
+                pid: 1,
+                cpu: 1.0,
+                memory: 50,
+                virtual_memory: 200,
+                run_time: 100,
+                status: "Sleep".into(),
+            },
+            ProcessInfo {
+                name: "firefox".into(),
+                pid: 2,
+                cpu: 50.0,
+                memory: 1000,
+                virtual_memory: 5000,
+                run_time: 500,
+                status: "Running".into(),
+            },
+            ProcessInfo {
+                name: "chrome".into(),
+                pid: 3,
+                cpu: 30.0,
+                memory: 500,
+                virtual_memory: 3000,
+                run_time: 300,
+                status: "Running".into(),
+            },
+            ProcessInfo {
+                name: "sshd".into(),
+                pid: 4,
+                cpu: 0.5,
+                memory: 10,
+                virtual_memory: 50,
+                run_time: 2000,
+                status: "Idle".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_cpu_ascending() {
+        let procs = test_procs_diverse();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Cpu, true);
+        assert_eq!(refs[0].pid, 4);
+        assert_eq!(refs[1].pid, 1);
+        assert_eq!(refs[2].pid, 3);
+        assert_eq!(refs[3].pid, 2);
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_memory_ascending() {
+        let procs = test_procs_diverse();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Memory, true);
+        assert_eq!(refs[0].pid, 4);
+        assert_eq!(refs[1].pid, 1);
+        assert_eq!(refs[2].pid, 3);
+        assert_eq!(refs[3].pid, 2);
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_virtual_memory_ascending() {
+        let procs = test_procs_diverse();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::VirtualMemory, true);
+        assert_eq!(refs[0].pid, 4);
+        assert_eq!(refs[1].pid, 1);
+        assert_eq!(refs[2].pid, 3);
+        assert_eq!(refs[3].pid, 2);
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_run_time_ascending() {
+        let procs = test_procs_diverse();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::RunTime, true);
+        assert_eq!(refs[0].pid, 1);
+        assert_eq!(refs[1].pid, 3);
+        assert_eq!(refs[2].pid, 2);
+        assert_eq!(refs[3].pid, 4);
+    }
+
+    #[test]
+    fn sort_processes_sorts_by_status_ascending() {
+        let procs = test_procs_diverse();
+        let mut refs: Vec<&ProcessInfo> = procs.iter().collect();
+        sort_processes(&mut refs, ProcSortField::Status, true);
+        assert_eq!(refs[0].pid, 4);
+        assert_eq!(refs[1].pid, 2);
+        assert_eq!(refs[2].pid, 3);
+        assert_eq!(refs[3].pid, 1);
     }
 }
