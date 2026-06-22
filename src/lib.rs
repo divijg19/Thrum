@@ -9,8 +9,10 @@
 )]
 
 mod app;
+mod cli;
 mod samplers;
 mod tui;
+mod ui;
 
 use std::time::Duration;
 
@@ -35,8 +37,7 @@ impl Drop for TerminalGuard {
 ///
 /// Returns an error if terminal initialization, mouse capture, or
 /// the event loop encounters an I/O error.
-#[expect(clippy::option_if_let_else)]
-pub fn run(mut config: app::Config) -> std::io::Result<()> {
+pub fn run(mut config: Config) -> std::io::Result<()> {
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let _guard = TerminalGuard;
@@ -68,13 +69,11 @@ pub fn run(mut config: app::Config) -> std::io::Result<()> {
                 }
                 Err(e) => {
                     samplers = samplers::Samplers::new();
-                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = e.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "sampling failed".to_owned()
-                    };
+                    let msg = e
+                        .downcast_ref::<&str>()
+                        .map(ToString::to_string)
+                        .or_else(|| e.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "sampling failed".to_owned());
                     app.error_msg = Some(msg);
                 }
             }
@@ -115,9 +114,7 @@ pub fn run(mut config: app::Config) -> std::io::Result<()> {
     Ok(())
 }
 
-pub use app::{
-    App, CliAction, Config, KillState, ProcSortField, Tab, TabOrientation, TabState, parse_args,
-    print_help,
-};
+pub use app::{App, KillState, ProcSortField, Tab, TabOrientation, TabState};
+pub use cli::{CliAction, Config, parse_args, print_help};
 pub use samplers::Samples;
 pub use tui::draw;
