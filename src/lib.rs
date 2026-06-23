@@ -17,6 +17,7 @@
 
 mod app;
 mod cli;
+mod observe;
 mod samplers;
 mod tui;
 mod ui;
@@ -62,6 +63,7 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
     let refresh = Duration::from_millis(config.refresh_ms);
 
     let mut last_samples = samplers::Samples::default();
+    let mut prev_processes: Vec<samplers::ProcessInfo> = Vec::new();
 
     loop {
         if !app.paused {
@@ -86,7 +88,12 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
             }
         }
 
-        terminal.draw(|f| tui::draw(f, &mut app, &last_samples))?;
+        let observations = observe::observe(&last_samples, &prev_processes);
+        terminal.draw(|f| tui::draw(f, &mut app, &last_samples, &observations))?;
+
+        if !app.paused {
+            prev_processes = last_samples.processes.clone();
+        }
 
         if event::poll(refresh)? {
             let _ = app.refresh_term_size();
@@ -123,5 +130,6 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
 
 pub use app::{App, KillState, ProcSortField, Tab, TabOrientation, TabState};
 pub use cli::{CliAction, Config, parse_args, print_help};
+pub use observe::{ChangeKind, Observation, ObservationKind, ObservationPriority, observe};
 pub use samplers::Samples;
 pub use tui::draw;

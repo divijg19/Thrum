@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Gauge, Paragraph, Row, Table};
 
 use crate::app::{self, App, ProcSortField, SelectionState, Tab, TabOrientation, TabState};
+use crate::observe::{ChangeKind, Observation, ObservationKind};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 use crate::ui::{
     DASH_CPU_GAUGE_WIDTH, DASH_GAUGE_HEIGHT, DASH_MEM_SWAP_GAUGE_WIDTH, DISK_IO_RW_WIDTH,
@@ -148,39 +149,78 @@ fn render_filtered_table<'a, T>(
     true
 }
 
-#[expect(
-    clippy::needless_pass_by_ref_mut,
-    reason = "signature matches TabWidget trait for v0.6.x; app unused here but consumed by overlays"
-)]
-fn render_dash(frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
-    let [_, gauges, cpu_spark, mem_spark, load, summary, _] = Layout::vertical([
+fn render_overview(
+    frame: &mut Frame,
+    area: Rect,
+    _app: &mut App,
+    samples: &Samples,
+    observations: &[Observation],
+) {
+    let [_, gauges, _, obs_area, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(DASH_GAUGE_HEIGHT),
-        Constraint::Length(SPARKLINE_HEIGHT),
-        Constraint::Length(SPARKLINE_HEIGHT),
         Constraint::Length(SINGLE_LINE_HEIGHT),
-        Constraint::Length(SINGLE_LINE_HEIGHT),
+        Constraint::Fill(1),
         Constraint::Fill(1),
     ])
     .areas(area);
 
     render_dash_gauges(frame, gauges, samples);
-    render_sparkline(
-        frame,
-        cpu_spark,
-        SPARK_CPU_TITLE,
-        &app.cpu_history,
-        SPARK_CPU_COLOR,
-    );
-    render_sparkline(
-        frame,
-        mem_spark,
-        SPARK_MEM_TITLE,
-        &app.mem_history,
-        SPARK_MEM_COLOR,
-    );
-    render_dash_load(frame, load, samples);
-    render_dash_summary(frame, summary, samples);
+
+    if observations.is_empty() {
+        let msg = Paragraph::new(" System idle — no observations to report ")
+            .style(STYLE_DARK_GRAY)
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, obs_area);
+        return;
+    }
+
+    let lines: Vec<Line> = observations.iter().map(observation_to_line).collect();
+    frame.render_widget(Paragraph::new(lines).style(STYLE_GRAY), obs_area);
+}
+
+fn observation_to_line(obs: &Observation) -> Line<'static> {
+    match &obs.kind {
+        ObservationKind::DominantProcess {
+            pid: _,
+            name,
+            cpu_pct,
+            mem_bytes,
+        } => {
+            let mem_label = format_memory_label(*mem_bytes);
+            Line::from(vec![
+                Span::styled(format!(" {name:<24}"), STYLE_BOLD),
+                Span::raw(format!(" CPU {cpu_pct:>5.1}%")),
+                Span::raw(format!("  Mem {mem_label}")),
+            ])
+        }
+        ObservationKind::RecentChange {
+            pid: _,
+            name,
+            kind,
+            delta_cpu: _,
+            prev_cpu,
+            curr_cpu,
+        } => {
+            let (symbol, color) = match kind {
+                ChangeKind::Surge => ("\u{25b4}", STYLE_RED),
+                ChangeKind::Drop => ("\u{25be}", STYLE_GREEN),
+                ChangeKind::New => ("\u{2726}", STYLE_YELLOW),
+                ChangeKind::Exited => ("\u{2715}", STYLE_DARK_GRAY),
+            };
+            let detail = match kind {
+                ChangeKind::New => format!(" CPU {curr_cpu:.1}%"),
+                ChangeKind::Exited => format!(" CPU was {prev_cpu:.1}%"),
+                _ => format!(" CPU {prev_cpu:.1}% \u{2192} {curr_cpu:.1}%"),
+            };
+            Line::from(vec![
+                Span::styled(format!(" {symbol}"), color),
+                Span::raw(" "),
+                Span::styled(format!("{name:<22}"), STYLE_BOLD),
+                Span::raw(format!(" {detail}")),
+            ])
+        }
+    }
 }
 
 fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
@@ -226,40 +266,6 @@ fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
         .percent(swap_pct)
         .label(swap_label);
     frame.render_widget(&swap_g, swap_area);
-}
-
-fn render_dash_load(frame: &mut Frame, area: Rect, samples: &Samples) {
-    let l = Paragraph::new(Line::from(vec![
-        Span::styled("Load Average  ", STYLE_BOLD),
-        Span::raw(format!(
-            "{:.2} (1m)  {:.2} (5m)  {:.2} (15m)",
-            samples.load_one, samples.load_five, samples.load_fifteen,
-        )),
-    ]))
-    .alignment(Alignment::Center)
-    .style(STYLE_GRAY);
-    frame.render_widget(&l, area);
-}
-
-fn render_dash_summary(frame: &mut Frame, area: Rect, samples: &Samples) {
-    let s = Paragraph::new(Line::from(vec![
-        Span::styled("Net ", STYLE_BOLD),
-        Span::raw(format!(
-            "TX {}  RX {}",
-            format_bytes(samples.net_tx_rate, false).trim(),
-            format_bytes(samples.net_rx_rate, false).trim(),
-        )),
-        Span::raw("  "),
-        Span::styled("Disk ", STYLE_BOLD),
-        Span::raw(format!(
-            "R {}  W {}",
-            format_bytes(samples.disk_read_rate, false).trim(),
-            format_bytes(samples.disk_write_rate, false).trim(),
-        )),
-    ]))
-    .alignment(Alignment::Center)
-    .style(STYLE_GRAY);
-    frame.render_widget(&s, area);
 }
 
 fn render_time(frame: &mut Frame, area: Rect, _app: &mut App, samples: &Samples) {
@@ -721,21 +727,48 @@ fn build_proc_table<'a>(
 /// Trait for tab-specific rendering, enabling v0.6.x widget-oriented dispatch.
 pub trait TabWidget {
     /// Render the tab content into the given area.
-    fn render(&self, frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples);
+    fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        app: &mut App,
+        samples: &Samples,
+        observations: &[Observation],
+    );
 }
 
 macro_rules! impl_tab {
     ($name:ident, $render:ident) => {
         struct $name;
         impl TabWidget for $name {
-            fn render(&self, frame: &mut Frame, area: Rect, app: &mut App, samples: &Samples) {
+            fn render(
+                &self,
+                frame: &mut Frame,
+                area: Rect,
+                app: &mut App,
+                samples: &Samples,
+                _observations: &[Observation],
+            ) {
                 $render(frame, area, app, samples);
             }
         }
     };
 }
 
-impl_tab!(DashTab, render_dash);
+struct OverviewTab;
+impl TabWidget for OverviewTab {
+    fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        app: &mut App,
+        samples: &Samples,
+        observations: &[Observation],
+    ) {
+        render_overview(frame, area, app, samples, observations);
+    }
+}
+
 impl_tab!(ProcTab, render_proc);
 impl_tab!(NetTab, render_net);
 impl_tab!(FilesTab, render_files);
@@ -746,11 +779,19 @@ impl_tab!(DiskTab, render_disk);
 impl_tab!(MemTab, render_mem);
 
 const RENDERERS: &[&dyn TabWidget; 9] = &[
-    &DashTab, &ProcTab, &NetTab, &FilesTab, &TimeTab, &TempTab, &CoresTab, &DiskTab, &MemTab,
+    &OverviewTab,
+    &ProcTab,
+    &NetTab,
+    &FilesTab,
+    &TimeTab,
+    &TempTab,
+    &CoresTab,
+    &DiskTab,
+    &MemTab,
 ];
 
 /// Entry point for rendering a single frame: tabs, content, status bar, and overlays.
-pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
+pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples, observations: &[Observation]) {
     let block = if app.tab_orientation.is_horizontal() || app.sidebar_visible {
         Block::bordered().title(" Thrum ")
     } else {
@@ -795,7 +836,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, samples: &Samples) {
         (chunks[0], chunks[1])
     };
 
-    RENDERERS[app.active_tab.index()].render(frame, tab_area, app, samples);
+    RENDERERS[app.active_tab.index()].render(frame, tab_area, app, samples, observations);
 
     render_status_bar(frame, status_area, app);
     render_overlays(frame, tab_area, app);
