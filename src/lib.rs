@@ -63,7 +63,7 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
     let refresh = Duration::from_millis(config.refresh_ms);
 
     let mut last_samples = samplers::Samples::default();
-    let mut prev_processes: Vec<samplers::ProcessInfo> = Vec::new();
+    let mut prev_state: observe::PrevState = observe::PrevState::default();
 
     loop {
         if !app.paused {
@@ -88,11 +88,11 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
             }
         }
 
-        let observations = observe::observe(&last_samples, &prev_processes);
+        let observations = observe::observe(&last_samples, &prev_state);
         terminal.draw(|f| tui::draw(f, &mut app, &last_samples, &observations))?;
 
         if !app.paused {
-            prev_processes = last_samples.processes.clone();
+            prev_state = observe::PrevState::from(&last_samples);
         }
 
         if event::poll(refresh)? {
@@ -130,6 +130,9 @@ pub fn run(mut config: Config) -> std::io::Result<()> {
 
 pub use app::{App, KillState, ProcSortField, Tab, TabOrientation, TabState};
 pub use cli::{CliAction, Config, parse_args, print_help};
-pub use observe::{ChangeKind, Observation, ObservationKind, ObservationPriority, observe};
+pub use observe::{
+    ChangeKind, Observation, ObservationKind, ObservationPriority, PressureTrend, PrevState,
+    observe,
+};
 pub use samplers::Samples;
 pub use tui::draw;

@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Gauge, Paragraph, Row, Table};
 
 use crate::app::{self, App, ProcSortField, SelectionState, Tab, TabOrientation, TabState};
-use crate::observe::{ChangeKind, Observation, ObservationKind};
+use crate::observe::{ChangeKind, Observation, ObservationKind, PressureTrend};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 use crate::ui::{
     DASH_CPU_GAUGE_WIDTH, DASH_GAUGE_HEIGHT, DASH_MEM_SWAP_GAUGE_WIDTH, DISK_IO_RW_WIDTH,
@@ -219,6 +219,29 @@ fn observation_to_line(obs: &Observation) -> Line<'static> {
                 Span::styled(format!("{name:<22}"), STYLE_BOLD),
                 Span::raw(format!(" {detail}")),
             ])
+        }
+        ObservationKind::CpuPressureTrend(trend) => {
+            let (text, color) = match trend {
+                PressureTrend::Emerging => ("CPU pressure increasing", STYLE_RED),
+                PressureTrend::Stable => ("CPU pressure sustained", STYLE_YELLOW),
+                PressureTrend::Subsiding => ("CPU pressure easing", STYLE_GREEN),
+            };
+            Line::from(Span::styled(format!(" {text}"), color))
+        }
+        ObservationKind::MemoryPressureTrend(trend) => {
+            let (text, color) = match trend {
+                PressureTrend::Emerging => ("Memory pressure increasing", STYLE_RED),
+                PressureTrend::Stable => ("Memory pressure sustained", STYLE_YELLOW),
+                PressureTrend::Subsiding => ("Memory pressure easing", STYLE_GREEN),
+            };
+            Line::from(Span::styled(format!(" {text}"), color))
+        }
+        ObservationKind::NetworkTransferDetected => Line::from(Span::styled(
+            " Sustained network transfer detected",
+            STYLE_CYAN,
+        )),
+        ObservationKind::DiskActivityDetected => {
+            Line::from(Span::styled(" Burst disk activity detected", STYLE_MAGENTA))
         }
     }
 }
