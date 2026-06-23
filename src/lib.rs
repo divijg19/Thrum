@@ -1,3 +1,16 @@
+//! Thrum — a terminal-native system observatory.
+//!
+//! Collects system metrics (processes, CPU, memory, network, disk,
+//! temperature, filesystems) and synthesizes them into structured
+//! observations that explain system behavior. Observations answer
+//! *what changed*, *why*, and *where to inspect next* — going beyond
+//! the raw metric surface.
+//!
+//! Entry point: [`run()`] initialises the terminal, event loop, and
+//! sampler pipeline, then dispatches rendering through the tab system.
+//! Re-exports at crate root provide the public API for integration
+//! testing and external consumers.
+
 #![deny(unsafe_code, trivial_casts)]
 #![expect(
     clippy::must_use_candidate,

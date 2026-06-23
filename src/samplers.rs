@@ -128,7 +128,6 @@ pub struct Samples {
     pub processes: Vec<ProcessInfo>,
     pub load_one: f64,
     pub load_five: f64,
-    pub load_fifteen: f64,
 }
 
 impl Samples {
@@ -297,7 +296,6 @@ impl Samplers {
             processes,
             load_one: load.one,
             load_five: load.five,
-            load_fifteen: load.fifteen,
         }
     }
 
