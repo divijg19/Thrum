@@ -15,6 +15,7 @@ use sysinfo::{
 };
 
 /// Snapshot of a single process (name, PID, CPU, memory, uptime, status).
+#[derive(Clone)]
 pub struct ProcessInfo {
     pub name: String,
     pub pid: u32,
