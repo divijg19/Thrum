@@ -1,11 +1,18 @@
 #![deny(unsafe_code, trivial_casts)]
-#![expect(clippy::must_use_candidate)]
-#![expect(clippy::multiple_crate_versions)] // ratatui→kasuari→hashbrown 0.16 vs ratatui→hashbrown 0.17
+#![expect(
+    clippy::must_use_candidate,
+    reason = "all public functions are potentially must-use; marking each individually is noisy"
+)]
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "ratatui→kasuari→hashbrown 0.16 vs ratatui→hashbrown 0.17"
+)]
 #![expect(
     clippy::cast_possible_truncation, // sparklines/gauges: f32/f64→u16/u64
     clippy::cast_precision_loss,       // percentages→display units
     clippy::cast_sign_loss,            // float→unsigned (cpu_usage etc.)
-    clippy::similar_names              // intentional: mem_used/mem_total etc.
+    clippy::similar_names,
+    reason = "intentional: mem_used/mem_total, rx_bytes/tx_bytes etc."
 )]
 
 mod app;

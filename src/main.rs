@@ -1,4 +1,7 @@
-#![expect(clippy::multiple_crate_versions)]
+#![expect(
+    clippy::multiple_crate_versions,
+    reason = "bin target has separate dep graph from lib; ratatui→hashbrown duplicates"
+)]
 use thrum::{CliAction, parse_args, print_help, run};
 
 fn main() -> std::io::Result<()> {
