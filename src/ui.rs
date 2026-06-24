@@ -418,13 +418,21 @@ impl StatusBar {
             return Cow::Owned(format!("Error: {err}"));
         }
         let label = app.active_tab.label();
+        let filter_active = app.tab_state().is_some_and(|s| !s.query.is_empty());
         if app.active_tab.is_proc() {
             let arrow = if app.proc_sort_asc {
                 "\u{2191}"
             } else {
                 "\u{2193}"
             };
-            Cow::Owned(format!(" [{label} {}{arrow}]", app.proc_sort_field))
+            let base = format!(" [{label} {}{arrow}]", app.proc_sort_field);
+            if filter_active {
+                Cow::Owned(format!("{base} [SEARCH]"))
+            } else {
+                Cow::Owned(base)
+            }
+        } else if filter_active {
+            Cow::Owned(format!(" {label} [SEARCH]"))
         } else {
             Cow::Borrowed(label)
         }
@@ -473,6 +481,11 @@ impl StatusBar {
         } else {
             hints.push("1-9 Tab".to_owned());
         }
+        if app.active_tab.is_proc() {
+            hints.push("nName cCPU rRev".to_owned());
+        }
+        hints.push("Space Pause".to_owned());
+        hints.push("? Help".to_owned());
 
         let toggle_label = if app.tab_orientation.is_horizontal() {
             if app.tab_bar_visible {
@@ -915,11 +928,11 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_no_quit_or_help_hints() {
+    fn status_bar_no_quit_hints() {
         let app = App::new();
         let (_, hints) = StatusBar::display(&app);
         assert!(!hints.contains("q/Ctrl+C"), "quit hint removed");
-        assert!(!hints.contains("? Help"), "help hint removed");
+        assert!(hints.contains("? Help"), "help hint present");
     }
 
     #[test]
