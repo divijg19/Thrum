@@ -49,6 +49,13 @@ pub const STYLE_GRAY: Style = Style::new().fg(Color::Gray);
 pub const STYLE_BLUE: Style = Style::new().fg(Color::Blue);
 pub const STYLE_BOLD: Style = Style::new().bold();
 
+// Semantic observation colors — used only by observation_to_line in tui.rs
+// These colors carry meaning (not decoration) and are distinct from the metric palette.
+pub const STYLE_NEUTRAL: Style = Style::new().fg(Color::DarkGray);
+pub const STYLE_ACTIVITY: Style = Style::new().fg(Color::Cyan);
+pub const STYLE_ATTENTION: Style = Style::new().fg(Color::Yellow);
+pub const STYLE_CRITICAL: Style = Style::new().fg(Color::Red);
+
 // Layout constants
 pub const DASH_GAUGE_HEIGHT: u16 = 3;
 const SEARCH_BAR_HEIGHT: u16 = 3;

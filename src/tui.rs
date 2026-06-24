@@ -7,12 +7,14 @@ use std::borrow::Cow;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Gauge, Paragraph, Row, Table};
 
 use crate::app::{self, App, ProcSortField, SelectionState, Tab, TabOrientation, TabState};
-use crate::observe::{ChangeKind, Observation, ObservationKind, PressureTrend};
+use crate::observe::{
+    ChangeKind, Observation, ObservationKind, ObservationPriority, PressureTrend,
+};
 use crate::samplers::{DiskInfo, NetInfo, ProcessInfo, Samples};
 use crate::ui::{
     DASH_CPU_GAUGE_WIDTH, DASH_GAUGE_HEIGHT, DASH_MEM_SWAP_GAUGE_WIDTH, DISK_IO_RW_WIDTH,
@@ -23,11 +25,12 @@ use crate::ui::{
     SPARK_MEM_COLOR, SPARK_MEM_HISTORY_COLOR, SPARK_MEM_HISTORY_TITLE, SPARK_MEM_TITLE,
     SPARK_NET_RX_COLOR, SPARK_NET_RX_TITLE, SPARK_NET_TX_COLOR, SPARK_NET_TX_TITLE,
     SPARK_SWAP_COLOR, SPARK_SWAP_TITLE, SPARK_TEMP_COLOR, SPARK_TEMP_TITLE, SPARK_USAGE_COLOR,
-    SPARK_USAGE_TITLE, SPARKLINE_HEIGHT, STYLE_BLUE, STYLE_BOLD, STYLE_CYAN, STYLE_DARK_GRAY,
-    STYLE_GRAY, STYLE_GREEN, STYLE_MAGENTA, STYLE_RED, STYLE_SELECTED, STYLE_YELLOW,
-    TEMP_COL_WIDTH, clamp_scroll, format_bytes, format_memory, format_memory_label, format_temp,
-    format_timestamp, format_uptime, render_horizontal_tabs, render_info_block, render_overlays,
-    render_search_bar, render_sidebar, render_sparkline, render_status_bar, sort_arrow,
+    SPARK_USAGE_TITLE, SPARKLINE_HEIGHT, STYLE_ACTIVITY, STYLE_ATTENTION, STYLE_BLUE, STYLE_BOLD,
+    STYLE_CRITICAL, STYLE_CYAN, STYLE_DARK_GRAY, STYLE_GREEN, STYLE_MAGENTA, STYLE_NEUTRAL,
+    STYLE_RED, STYLE_SELECTED, STYLE_YELLOW, TEMP_COL_WIDTH, clamp_scroll, format_bytes,
+    format_memory, format_memory_label, format_temp, format_timestamp, format_uptime,
+    render_horizontal_tabs, render_info_block, render_overlays, render_search_bar, render_sidebar,
+    render_sparkline, render_status_bar, sort_arrow,
 };
 
 impl Tab {
@@ -175,75 +178,62 @@ fn render_overview(
         return;
     }
 
-    let lines: Vec<Line> = observations.iter().map(observation_to_line).collect();
-    frame.render_widget(Paragraph::new(lines).style(STYLE_GRAY), obs_area);
+    let mut lines: Vec<Line> = Vec::with_capacity(observations.len() + 1);
+    lines.push(Line::from(Span::styled(" Observations", STYLE_BOLD)));
+    lines.extend(observations.iter().map(observation_to_line));
+    frame.render_widget(Paragraph::new(lines), obs_area);
+}
+
+fn observation_style(priority: ObservationPriority) -> Style {
+    let base = match priority {
+        ObservationPriority::Critical => STYLE_CRITICAL,
+        ObservationPriority::High => STYLE_ATTENTION,
+        ObservationPriority::Medium => STYLE_ACTIVITY,
+        ObservationPriority::Low => STYLE_NEUTRAL,
+    };
+    if priority == ObservationPriority::Critical {
+        base.add_modifier(Modifier::BOLD)
+    } else {
+        base
+    }
 }
 
 fn observation_to_line(obs: &Observation) -> Line<'static> {
-    match &obs.kind {
-        ObservationKind::DominantProcess {
-            pid: _,
-            name,
-            cpu_pct,
-            mem_bytes,
-        } => {
-            let mem_label = format_memory_label(*mem_bytes);
-            Line::from(vec![
-                Span::styled(format!(" {name:<24}"), STYLE_BOLD),
-                Span::raw(format!(" CPU {cpu_pct:>5.1}%")),
-                Span::raw(format!("  Mem {mem_label}")),
-            ])
+    let text = match &obs.kind {
+        ObservationKind::DominantProcess { name, cpu_pct, .. } => {
+            format!("{name} dominating CPU usage ({cpu_pct:.0}%)")
         }
         ObservationKind::RecentChange {
-            pid: _,
             name,
             kind,
-            delta_cpu: _,
             prev_cpu,
             curr_cpu,
-        } => {
-            let (symbol, color) = match kind {
-                ChangeKind::Surge => ("\u{25b4}", STYLE_RED),
-                ChangeKind::Drop => ("\u{25be}", STYLE_GREEN),
-                ChangeKind::New => ("\u{2726}", STYLE_YELLOW),
-                ChangeKind::Exited => ("\u{2715}", STYLE_DARK_GRAY),
-            };
-            let detail = match kind {
-                ChangeKind::New => format!(" CPU {curr_cpu:.1}%"),
-                ChangeKind::Exited => format!(" CPU was {prev_cpu:.1}%"),
-                _ => format!(" CPU {prev_cpu:.1}% \u{2192} {curr_cpu:.1}%"),
-            };
-            Line::from(vec![
-                Span::styled(format!(" {symbol}"), color),
-                Span::raw(" "),
-                Span::styled(format!("{name:<22}"), STYLE_BOLD),
-                Span::raw(format!(" {detail}")),
-            ])
+            ..
+        } => match kind {
+            ChangeKind::Surge => format!("{name} surging to {curr_cpu:.0}% CPU"),
+            ChangeKind::Drop => format!("{name} dropping from {prev_cpu:.0}% CPU"),
+            ChangeKind::New => format!("{name} started at {curr_cpu:.0}% CPU"),
+            ChangeKind::Exited => format!("{name} exited (was at {prev_cpu:.0}% CPU)"),
+        },
+        ObservationKind::CpuPressureTrend(trend) => match trend {
+            PressureTrend::Emerging => "CPU load climbing rapidly".into(),
+            PressureTrend::Stable => "CPU load elevated".into(),
+            PressureTrend::Subsiding => "CPU load returning to normal".into(),
+        },
+        ObservationKind::MemoryPressureTrend(trend) => match trend {
+            PressureTrend::Emerging => "Memory usage rising".into(),
+            PressureTrend::Stable => "Memory usage elevated".into(),
+            PressureTrend::Subsiding => "Memory usage returning to normal".into(),
+        },
+        ObservationKind::NetworkTransferDetected => {
+            "Network transfer detected — inspect Net".into()
         }
-        ObservationKind::CpuPressureTrend(trend) => {
-            let (text, color) = match trend {
-                PressureTrend::Emerging => ("CPU pressure increasing", STYLE_RED),
-                PressureTrend::Stable => ("CPU pressure sustained", STYLE_YELLOW),
-                PressureTrend::Subsiding => ("CPU pressure easing", STYLE_GREEN),
-            };
-            Line::from(Span::styled(format!(" {text}"), color))
-        }
-        ObservationKind::MemoryPressureTrend(trend) => {
-            let (text, color) = match trend {
-                PressureTrend::Emerging => ("Memory pressure increasing", STYLE_RED),
-                PressureTrend::Stable => ("Memory pressure sustained", STYLE_YELLOW),
-                PressureTrend::Subsiding => ("Memory pressure easing", STYLE_GREEN),
-            };
-            Line::from(Span::styled(format!(" {text}"), color))
-        }
-        ObservationKind::NetworkTransferDetected => Line::from(Span::styled(
-            " Sustained network transfer detected",
-            STYLE_CYAN,
-        )),
-        ObservationKind::DiskActivityDetected => {
-            Line::from(Span::styled(" Burst disk activity detected", STYLE_MAGENTA))
-        }
-    }
+        ObservationKind::DiskActivityDetected => "Disk activity detected — inspect Disk".into(),
+    };
+    Line::from(Span::styled(
+        format!(" {text}"),
+        observation_style(obs.priority),
+    ))
 }
 
 fn render_dash_gauges(frame: &mut Frame, area: Rect, samples: &Samples) {
